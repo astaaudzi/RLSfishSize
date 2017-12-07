@@ -1,0 +1,212 @@
+---
+title: "RLSfishSize"
+author: "Asta"
+date: "6 December 2017"
+output: 
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc:yes
+---
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=FALSE}
+
+#this chunk includes initial data manipulations and does not need to be run every time 
+rm(list = ls()) # clear memory
+# install required packages (if not already installed)
+list.of.packages <- c("tidyverse", "ggmap", "lme4", "cowplot")
+new.packages     <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+# loading required packages
+lapply(list.of.packages, require, character.only = TRUE)
+
+```
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=FALSE, eval=FALSE}
+
+load(file="rlsall.RData")
+
+## Load thermal optima data from Rick's studies
+thermal <- read.csv(file = "ThermalOptima.csv")
+
+## Attach different estimates of thermal midpoint to the main dataset (matching by Recorded species, not Taxonomic name)
+rls_all$therm_count <- thermal$count[match(rls_all$RecordedSpecies, thermal$SPECIES_NAME)] 
+rls_all$therm_mid1090 <- thermal$Thermal.mid.point..10.90.[match(rls_all$RecordedSpecies, thermal$SPECIES_NAME)]
+rls_all$therm_midpoint <- thermal$MP..5.95.[match(rls_all$RecordedSpecies, thermal$SPECIES_NAME)]
+rls_all$therm_midpoint2 <- thermal$MP..5mean.95max.[match(rls_all$RecordedSpecies, thermal$SPECIES_NAME)]
+
+
+## Load Bassian site data. This data was compiled earlier from German's work on MPA effects. It has values of 0, 0.5 and 1, where 0.5 means restricted take zone. 
+load(file="SiteData_bas.RData")  
+siteData$mpa[is.na(siteData$mpa)] <- 0  #assume that sites for which no protection data is available are not protected 
+
+#add extra variable to the main rls_all data set to reflect site protection. This is only for Tasmanian sites
+rls_all$mpa <- siteData$mpa[match(rls_all$SiteCode, siteData$SiteCode)]
+
+
+## Load data about the protection status for global sites from Rick's studies
+rls_prot <- read_csv("neoli.csv")  #file with protection status 
+rls_prot <- rls_prot %>% select(SiteCode, Governance)
+
+#in neoli.csv data empty values for governance means that the site is not protected. So we replace them with 0
+# I also replace the #N/A data with 0 assuming that absence of data means no protection 
+rls_prot$Governance[is.na(rls_prot$Governance)] <- 0
+rename
+
+## merge global protection data with the rls_all data, overwriting NA values in the mpa column (but not existing values, so German's data takes precedence). The text in brackets says that if mpa column has na value (conditional test), use value from Governance column (yes), or use value from mpa column if no na is found (no). Then remove the Governance column 
+rls_all = within(merge(rls_all, rls_prot, by="SiteCode", all.x=TRUE), {mpa <- ifelse(is.na(mpa),Governance,mpa); Governance <- NULL})
+
+head(rls_all)
+
+save(rls_all, file = "rlsall_tempmpa.RData")
+
+```
+
+### Select the species to use
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+#load(file="rlsbas.RData")
+load(file = "rlsall_tempmpa.RData")
+
+#Select which species to include 
+VertList5y <- rls_all  %>% 
+  filter(Country == "Australia") %>% 
+    filter (CLASS == "Actinopterygii" | CLASS == "Elasmobranchii") %>% #select vertebrate ectotherms
+    #  filter (Ecoregion == "Bassian") %>%
+      filter (Method == 1) %>% # use only method 1 
+        group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER) %>%
+          summarise (years = n_distinct(year)) %>%
+            filter (years > 9)
+VertSpecies5y = VertList5y[[1]] #73 species with at least 10 years of data for Bassian, or 314 for all Australian spp
+
+#Select the data for species 
+VertTrendsAllSize <- rls_all  %>%  ## entire data set
+  filter (Method==1) %>%
+    filter(Country == "Australia") %>%
+    # filter (mpa == 1) %>% # select only unprotected sites, to minimise bias from harvesting 
+      # filter (Ecoregion == "Bassian") %>% 
+       #   filter (SiteLong > 147) %>%
+         filter (TAXONOMIC_NAME %in% VertSpecies5y) %>% #chose only cases for selected species
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER, day, month, year) %>% # average size and maximum size observed on a given day
+        summarise (sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMaxt = max(SizeClass), therm1090 = mean(therm_mid1090), therm1 = mean(therm_midpoint), therm2 = mean(therm_midpoint2), mpa = mean(mpa)) %>%
+          group_by(TAXONOMIC_NAME, GENUS, CLASS, ORDER, year) %>% # mean of day values for each year 
+            summarise(sizeMean = round(mean(sizeMean), 2), sizeMax = mean(sizeMaxt), ther1090 = mean(therm1090), ther1 = mean(therm1), ther2 = mean(therm2), mp = mean(mpa))
+
+VertTrendsAllSize = na.omit(VertTrendsAllSize)
+VertTrendsAllSize$year <-VertTrendsAllSize$year - min(VertTrendsAllSize$year) # transform year data from 0 to 25
+
+
+```
+
+### GLM analyses for Mean Size 
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+mod0 <- lmer(sizeMean ~ 1 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #null model, only random effect 
+
+mod1t <- lmer(sizeMean ~ ther2 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) # thermal preference explains size 
+anova(mod0, mod1t) 
+#all data very highly significant  0.0009762 *** //for Bassian data p = 0.0648 (0.3972 if mpa==0, 0.06491 if mpa==1) //if based on 73 long-term Bassian species all Bas sites p=0.667 // for 73 Bassian species ALL sites p=0.72
+
+mod1y <- lmer(sizeMean ~ year + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) # year explains size 
+anova(mod0, mod1y) 
+# all data significant too 0.01461 * // for Bassian data p = 2.854e-05 *** (1.155e-06 *** if mpa==0, 0.01533 if mpa==1) //the Bassian year slope is -0.11 for all data and -0.21 for mpa==0 //Bas species all sites 5.165e-06 *** // for 73 Bassian species ALL sites 0.00312 ** // for Bassian species eastern sites 3.133e-08 *** with the slope of -0.145 and this is the final model too 
+
+mod1m <- lmer(sizeMean ~ mp + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #protection explains size
+anova(mod0, mod1m) 
+# all data not significant 0.6954 // for Bassian data p = 0.1171 // Bas species all sites 0.02401 * //Bas species ALL sites 0.3715 //Bas species eastern sites 0.057
+
+mod2 <- lmer(sizeMean ~ year + ther2 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #both year and ther explain size
+anova(mod1y,mod2) 
+#all data adding thermal to year is important, 0.001484 ** // for Bassian it is almost important 0.054 (0.34 is mpa==0, 0.05579 if mpa==1) // Bassian species ALL sites adding ther does not help 0.6789
+anova(mod1t,mod2) 
+# all data adding year to thermal is important too, 0.02273 * // for Bassian it is very important 2.434e-05 *** (1.045e-06 *** if mpa==0, 0.0133 * if mpa==1) // Bas species ALL sites adding year is important 0.003041 **
+
+mod2a <- lmer(sizeMean ~ year + mp + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE)
+anova(mod1y,mod2a) 
+#for BAS species bas sites adding mp to year is significant 0.01046 * //for all sites p=0.22
+anova(mod1m,mod2a) 
+# for BAS species bas sites adding year to mp is very significant 2.41e-06 *** //for all sties 0.002117 **
+
+mod3 <- lmer(sizeMean ~ year*ther2 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #is there an interaction in year * thermal, i.e. different slopes 
+anova(mod2, mod3) 
+#all data the answer is no 0.1357 // for Bassian the interaction is almost significant 0.06186 (0.206 if mpa==0, 0.2991 if mpa==1)
+
+mod3a <- lmer(sizeMean ~ year*mp + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) 
+#is there an interaction in year * mp, i.e. different slopes 
+anova(mod2a, mod3a) 
+#the answer is no, 0.96 for bassian species all sites, or for bassian species eastern sites
+
+#For Bassian species bassian sites this is the final model 
+summary(mod2a) #summary shows the intercept at 26 (average size of year 0 no mpa), year slope of -0.12cm per year, mpa effect of 1.9cm larger in protected areas
+
+####
+
+```
+
+
+### GLM analyses for max Size 
+This is a maximum size observed in a given day and then a MEAN of maximum sizes of all days per year. So it is not a maximum size in the whole year
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+mod0 <- lmer(sizeMax ~ 1 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #null model, only random effect 
+
+mod1t <- lmer(sizeMax ~ ther2 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) # thermal preference explains size 
+anova(mod0, mod1t) 
+#Bas sp, Bas sites p=0.64, all sites the same // all spp all sites 0.0006609 ***
+
+mod1y <- lmer(sizeMax ~ year + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) # year explains size 
+anova(mod0, mod1y) 
+#Bas sp, Bas sites p=0.0787, all sites 0.277 // all spp all sites 0.4438
+
+mod1m <- lmer(sizeMax ~ mp + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #protection explains size
+anova(mod0, mod1m) 
+#Bas sp, Bas sites p=0.09778, all sites 0.1
+
+mod2 <- lmer(sizeMax ~ year + ther2 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #both year and ther explain size
+anova(mod1y,mod2) 
+anova(mod1t,mod2) 
+
+mod2a <- lmer(sizeMax ~ year + mp + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE)
+anova(mod1y,mod2a) 
+#for BAS species bas sites adding mp to year is  0.07693
+anova(mod1m,mod2a) 
+# for BAS species bas sites adding year to mp is 0.06215
+
+mod3 <- lmer(sizeMax ~ year*ther2 + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) #is there an interaction in year * thermal, i.e. different slopes 
+anova(mod2, mod3) 
+anova(mod3, mod1y)
+anova(mod3,mod1t)
+anova(mod3,mod0)
+
+mod3a <- lmer(sizeMax ~ year*mp + (1|TAXONOMIC_NAME), data = VertTrendsAllSize, REML = FALSE) 
+#is there an interaction in year * mp, i.e. different slopes 
+anova(mod2a, mod3a) 
+#the answer is no, 0.89
+
+summary(mod3)
+
+
+####
+
+```
+
+
+
+
+Which of the other ecoregions should be included?
+[1] "Bassian"                                   "Western Bassian"                           "Cape Howe"                                
+ [4] "Houtman"                                   "South Australian Gulfs"                    "Leeuwin"                                  
+ [7] "Great Australian Bight"                    "Central and Southern Great Barrier Reef"   "Tweed-Moreton"                            
+[10] "Manning-Hawkesbury"                        "Cocos-Keeling/Christmas Island"            "Torres Strait Northern Great Barrier Reef"
+[13] "Coral Sea"                                 "Gulf of Papua"                             "Lord Howe and Norfolk Islands"            
+[16] "Exmouth to Broome"                         "Ningaloo"                                  "Bonaparte Coast"                          
+[19] "Arnhem Coast to Gulf of Carpenteria"       "Shark Bay"   
+
+
