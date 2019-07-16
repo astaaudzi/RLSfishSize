@@ -1,0 +1,3695 @@
+---
+title: "Relationshop between temperature and the average observed body size of a species"
+author: "Asta Audzijonyte, Shane Richards, Julia Blanchard et al."
+date: "22 March 2018"
+output: 
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc:yes
+---
+### Load libraries
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=FALSE}
+
+rm(list = ls()) # clear memory
+
+library(tidyverse)
+library(maps)
+library(mapdata)
+library(rstan)
+library(ggplot2)
+library(ggmap)
+library(reshape)
+library(lmodel2)
+library(cowplot)
+library(weights)
+
+
+```
+
+### Load datafiles
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=FALSE}
+
+#Main datafile of fish sizes after removing outliers and rare species (335 species in the dataset)
+load(file = "inputs/fish_data.RData") #the data file is called fish_temp
+#check that we have 335 species 
+length(unique(main_data$TAXONOMIC_NAME))
+
+#load australian base file - this should be replaced, because google now requires payment for using files 
+#australia = get_map(location = c(lon = 135, lat = -30), zoom = 4, maptype = "satellite")
+#save(australia, file = "australia.RData")
+load(file = "inputs/australia.RData")
+
+
+```
+
+
+main_data <- rls_st %>% select(Location, SurveyID, SiteCode, Diver, TAXONOMIC_NAME, SPECIES_EPITHET, GENUS, FAMILY, ORDER, SizeClass, day, month, year, geogroup, SiteLat, SiteLong, midpoint, LWa, LWb, GGD12, scaledGDD, meansst, MaxLenFB, MaxSizeObs, SST_1yago, SST_2yago, SST_3yago, SST_5yago)
+
+### Extended Fig1: map data and explore 
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo = F, eval = T, fig.width=10, fig.height=6} 
+# Here you can explore all survey sites in the dataset, but plotting them AKES A LONG TIME!!!
+#ggmap(australia, extent = "panel", legend = "bottomright") +
+#  geom_point(aes(x = main_data$SiteLong, y = main_data$SiteLat), data = main_data, size = 1, color = "orange") + 
+#  ggtitle ("All RLS/MPA sites (not grouped yet)")
+
+## Now map all the sites coloured by their geogroup and check that they look ok on the grid
+#these are the grid lines for 0.5degree - THIS ALSO TAKES A LONG TIME
+#hlines <- seq(min(main_data$SiteLat),max(main_data$SiteLat),by=0.5) # create a sequence of 0.5 degree
+#vlines <- seq(min(main_data$SiteLong),max(main_data$SiteLong),by=0.5)
+#ggmap(australia, extent = "panel", legend = "bottomright") +
+#geom_point(aes(x = main_data$SiteLong, y = main_data$SiteLat), data = main_data, size = 1, color = main_data$geogroup) +
+#scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+#scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0)) +
+#  geom_vline(xintercept = vlines) +
+#  geom_hline(yintercept = hlines) +
+#  ggtitle("Grouping of RLS/MPA sites based on geographic grid") +
+#xlab("Longitutde") + ylab("Latitude")
+
+#Get some summary statistics about the geographic groups. For the plot purposes the annual cell temperature is calculated as a mean over all years. In analyses we use annual temperature  
+rls_aus_geo <- main_data %>% 
+    group_by(geogroup) %>% 
+      summarise (location = first(Location), latt = round(mean(SiteLat),3), long = round(mean(SiteLong),3), year = n_distinct(year), surveys = n_distinct(SurveyID), locatnum = n_distinct(Location), anntemp = mean(meansst), species = n_distinct(TAXONOMIC_NAME), gdd = mean(scaledGDD)) 
+
+## Now plot the geographic groups but the colour of the dot reflects the mean geosite temperature
+rls_aus_geo$tempF <- floor(rls_aus_geo$anntemp) #round the annual SST to the nearest degree 
+colvector <- list(NA)
+colfunc <- colorRampPalette(c("yellow", "red")) #create colour ramp pallele
+tempcol = colfunc(18) # sample 18 colours from it, as the difference between min and max geosite temperature is 18 degrees
+colvector$col <- tempcol
+colvector$tempF <- seq(from = 12, to = 29)
+# add a temperature colour identifier to each geosite
+rls_aus_geo$color <- colvector$col[match(rls_aus_geo$tempF, colvector$tempF)]
+
+ggmap(australia, extent = "panel", legend = "bottomright") +
+  geom_point(aes(x = rls_aus_geo$long, y = rls_aus_geo$latt), data = rls_aus_geo, size = (rls_aus_geo$species/30), color = rls_aus_geo$color) +
+  ggtitle("Mean annual SST of each geografic cell (12 to 29), circle size proportional to species number") + 
+  xlab("Longitutde") + ylab("Latitude")
+
+
+```
+
+### Daily SST values to get temperature statistics
+
+This chunk does not have to be run because the main datafile already has SST statistics associated with each geographic cell. However, it is included here in case someone wants to do different analyses or calcualte different temperature statistics. Thanks to Mike Sumner (Australian Antarctic Division) for help with the SST data!
+
+```{r, warning=FALSE, message=FALSE, eval = F, echo = F}
+### DAILY MODEL DATA
+
+## load daily SST values for the 280 geographic cells (each identified with a unique number)
+load(file = "inputs/dailySST.RData")
+
+#Calculate mean annual temperature for each geogroup (cell) and save
+meangeoSST <- dailyTemp %>% group_by(geogroup, year) %>% summarise (annSST = mean(sst), count = n())
+
+```
+
+### Extended Data Fig.11: are species distributed lognormally? Mostly
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
+#rename the data frame 
+df <- main_data
+
+#set factor levels
+df$TAXONOMIC_NAME <- factor(df$TAXONOMIC_NAME)
+df$geogroup <- factor(df$geogroup)
+#there are actually more size classes in the data set, but for plotting purposes we don't use largest size classes. Missing size classes will be shown as NA. This is not the size inforamtion used in the main analyses
+df$Size <- factor(as.character(round(df$SizeClass, 1)), 
+  levels = c("2.5",  "5", "7.5", "10", "12.5", "15", "20", "25", "30", "35", "37.5", "40", "50", "62.5", "75", "87.5", "100"))
+
+spp <- unique(df$TAXONOMIC_NAME)
+
+## select which species to plot. For manuscript purposes I plot only 20 species
+df_summary <- df %>% filter (TAXONOMIC_NAME %in% spp[c(1:20)]) %>% group_by(TAXONOMIC_NAME, Size) %>% summarise(n = n()) 
+
+ggplot(df_summary, aes(x = Size, y = n, group = TAXONOMIC_NAME)) +
+  geom_point() + geom_line() +
+  facet_wrap( ~ TAXONOMIC_NAME, scale = "free_y") +
+  labs(x = "Size (cm)", y = "Abundance") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size = 6),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank()
+  )
+
+
+```
+
+
+### Extended Data Fig.2: Plot size-temperature distributions in space
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=FALSE, eval = F}
+
+load(file = "inputs/fish_data.RData")
+
+#overwrite dataset name so I can use Shane's code
+df <- main_data
+##rm(fish_temp)
+Species <- sort(unique(df$TAXONOMIC_NAME))
+
+for (aa in 1:length(Species)) {
+
+ SpeciesName <- Species[aa]
+ print(SpeciesName)
+ print(aa)
+ 
+ #prepare data 
+ df$y <- log(df$SizeClass)
+  df_fit <- df %>% filter(TAXONOMIC_NAME == SpeciesName)
+  
+  df_fit$X1 <- (df_fit$meansst - mean(df_fit$meansst)) / sd(df_fit$meansst)
+  df_fit$X2 <- df_fit$X1^2
+  
+  yVals <- sort(unique(df$SizeClass)) # fish size classes
+  I     <- length(yVals)              # number of fish size classes
+  yCuts <- rep(0, I-1)                # fish sizes that split size classes
+  for (i in 2:I) {
+    yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+  }
+ 
+  ## plot sizes
+  df_means <- df_fit %>%
+    group_by(meansst) %>%
+    summarise(mu = mean(y), n = n(), ln10 = log10(n)) %>%
+    arrange(meansst)
+ 
+  sizeplot <- ggplot(df_fit, aes(x = meansst, y = y)) +
+    geom_point(color = "grey80", size = 0.5) + # observed data
+    geom_point(data = df_means, aes(x = meansst, y = mu, size = ln10), color = "dark red") +
+    ylim(0.5, 4.5) +
+    labs(
+      title = SpeciesName, subtitle = "grey dots show all observed size classes",
+      size = "no.ind\n(log10)", x = "Mean cell annual SST (C)", y = "Mean log length (cm)") +
+    theme_bw()
+
+ggsave (filename = paste("AllSizePlots/",SpeciesName,".jpg",sep=""), plot = sizeplot, width = 8, height = 7)    
+
+#save(sizeplot, file = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/output/newSpace/",SpeciesName,"sizeplot.RData",sep="")) 
+ 
+#load(file = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/output/",SpeciesName,"_plot.RData",sep=""))
+
+#print(sizeplot)
+
+rm(sizeplot)
+
+}
+
+#dev.off()
+
+```
+
+
+### First set of Bayesian analyses: split the data
+
+Based on initial analyses, some species need higher or lower priors to ensure that their posteriors are within priors. This chunk does not need to be run now, because final estimates of slopes are provided 
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
+#List of species
+Species <- sort(unique(df$TAXONOMIC_NAME))
+
+## species that should be repeated with increased beta0 priors (2.0 to 5.0) - use code spatial_largerb0.stan
+higherB0 <- c("Achoerodus gouldii", "Achoerodus viridis", "Aplodactylus arctidens", "Caranx melampygus", "Caranx sexfasciatus", "Cheilodactylus spectabilis", "Dactylophora nigricans", "Diagramma labiosum", "Heterodontus portusjacksoni", "Hipposcarus longiceps", "Kyphosus bigibbus","Kyphosus cinerascens","Kyphosus sydneyanus", "Kyphosus sectatrix","Latridopsis forsteri","Lethrinus nebulosus","Lutjanus bohar", "Naso tonganus", "Plectropomus leopardus","Seriola lalandi") #20 spp 
+
+## decrease beta0 priors (0.5 to 3.0) = use code spatial_lowerb0.stan
+lowerB0 <- c("Apogon doederleini", "Brachaluteres jacksonianus", "Chromis atripes", "Chromis margaritifer", "Chromis nitida", "Chromis viridis", "Cirrhilabrus exquisitus", "Cirripectes filamentosus", "Dascyllus aruanus", "Dascyllus reticulatus", "Pomacentrus coelestis","Pomacentrus lepidogenys","Pomacentrus moluccensis", "Valenciennea muralis") #14
+
+#these species need higher priors for size error term (0.2 to 0.6) = use code spatial_higherSigma.stan
+higherSigma <- c("Acanthaluteres vittiger", "Acanthochromis polyacanthus", "Amphiprion akindynos", "Cheilinus chlorourus", "Cheilinus trilobatus", "Cheilodipterus quinquelineatus", "Chlorurus sordidus", "Choerodon rubescens", "Chromis hypsilepis", "Cirrhilabrus punctatus", "Coris auricularis", "Coris batuensis", "Coris bulbifrons", "Coris picta", "Dischistodus prosopotaenia", "Gomphosus varius", "Halichoeres margaritaceus", "Halichoeres marginatus", "Halichoeres melanochir", "Halichoeres melanurus", "Halichoeres miniatus", "Halichoeres nebulosus", "Halichoeres nigrescens", "Hemigymnus fasciatus", "Hemigymnus melapterus", "Labrichthys unilineatus", "Labropsis australis","Macropharyngodon meleagris", "Notolabrus gymnogenis", "Notolabrus parilus", "Notolabrus tetricus", "Ophthalmolepis lineolatus", "Ostorhinchus aureus", "Parupeneus spilurus", "Pempheris multiradiata","Pomacentrus adelus","Pomacentrus bankanensis","Pomacentrus grammorhynchus","Pomacentrus vaiuli", "Pomacentrus wardi","Pseudolabrus luculentus", "Scarus frenatus", "Scarus ghobban", "Scarus niger", "Scarus prasiognathos", "Scarus rivulatus", "Scarus schlegeli", "Thalassoma lunare", "Thalassoma lutescens", "Upeneichthys vlamingii") #50
+
+#these species need lower priors for size (0.01 to 0.15) = use code spatial_lowerSigma.stan
+lowerSigma <- c("Acanthurus blochii", "Acanthurus grammoptilus", "Acanthurus nigricauda", "Arripis trutta", "Caesio caerulaurea", "Chromis ternatensis", "Hemitaurichthys polylepis","Lutjanus fulviflamma", "Lutjanus gibbus", "Lutjanus quinquelineatus", "Monodactylus argenteus", "Mugil cephalus", "Mulloidichthys flavolineatus", "Mulloidichthys vanicolensis", "Myripristis violacea", "Myripristis vittata", "Naso brevirostris", "Paracaesio xanthura", "Pseudocaranx georgianus", "Pterocaesio digramma", "Pterocaesio tile", "Pterocaesio trilineata", "Sphyraena obtusata", "Trachurus declivis")#24
+
+
+#these species need 1500 iterations and 1000 burn-in = use spatial_main.stan
+longerRuns <- c("Trachurus novaezelandiae", "Schuettea scalaripinnis", "Trachinops taeniatus", "Trachinops caudimaculatus", "Trachinops noarlungae") 
+
+#remaining species for which initial priors were suitable = use spatial_main.stan
+mainSpecies <- which((!Species %in% higherB0) & (!Species %in% longerRuns) & (!Species %in% lowerB0) & (!Species %in% higherSigma) & (!Species %in% lowerSigma)) #222 species
+
+df_main1 <- df %>% filter(TAXONOMIC_NAME %in% Species[mainSpecies[c(1:70)]])
+save(df_main1, file = "data1.RData")
+
+df_main2 <- df %>% filter(TAXONOMIC_NAME %in% Species[mainSpecies[c(71:140)]])
+save(df_main2, file = "data2.RData")
+
+df_main3 <- df %>% filter(TAXONOMIC_NAME %in% Species[mainSpecies[c(141:length(Species))]])
+save(df_main3, file = "data3.RData")
+
+df_higherB0 <- df %>% filter(TAXONOMIC_NAME %in% higherB0)
+save(df_higherB0, file = "data4.RData")
+
+df_lowerB0 <- df %>% filter(TAXONOMIC_NAME %in% lowerB0)
+save(df_lowerB0, file = "data5.RData")
+
+df_longer <- df %>% filter(TAXONOMIC_NAME %in% longerRuns)
+save(df_longer, file = "data6.RData")
+
+df_higherSigma <- df %>% filter(TAXONOMIC_NAME %in% higherSigma)
+save(df_higherSigma, file = "data7.RData")
+
+df_lowerSigma <- df %>% filter(TAXONOMIC_NAME %in% lowerSigma)
+save(df_lowerSigma, file = "data8.RData")
+
+
+```
+
+### Spatial in clusters
+
+The data files above were analysed on clusters and this is the code to be run for the main spatial analysis. Analyses don't have to be run here because ouputs are saved and available
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
+library(rstan)
+library(tidyverse)
+
+#Bayesian analyses are run for each species separately 
+for (x in 1:length(higherB0)) {
+#for (x in 1:length(Species)) {
+ 
+sppno <- higherB0[x]
+SpeciesName <- Species[sppno]
+print(SpeciesName)
+print(sppno)
+
+#SpeciesName <- Species[x] #select the species 
+#print(SpeciesName)
+#print(x)
+
+### prepare data 
+
+df$y <- log(df$SizeClass)
+df_fit <- df %>% filter(TAXONOMIC_NAME == SpeciesName)
+
+df_fit$X1 <- (df_fit$meansst - mean(df_fit$meansst)) / sd(df_fit$meansst)
+df_fit$X2 <- df_fit$X1^2
+
+yVals <- sort(unique(df$SizeClass)) # fish size classes
+I     <- length(yVals)              # number of fish size classes
+yCuts <- rep(0, I-1)                # fish sizes that split size classes
+for (i in 2:I) {
+  yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+}
+
+###
+df_stan <- df %>% 
+  filter(TAXONOMIC_NAME == SpeciesName) %>%
+  mutate(z1 = meansst - mean(meansst)) %>% # rescale size for fitting
+  dplyr::select(year, month, day, geogroup, z1, SizeClass) %>%
+  mutate(
+    survey_date = as.Date(paste(year, month, day, sep = "-")),
+    survey = paste(survey_date, geogroup, sep = "-")
+  ) %>%
+  arrange(survey) %>%
+  mutate(indx_srv = as.integer(factor(survey)))
+
+# add random factor indexes for year, location, and sample
+years    <- sort(unique(df_stan$year))
+df_years <- tibble(year = years, indx_year = 1:length(years))
+grps    <- sort(unique(df_stan$geogroup))
+df_grps <- tibble(geogroup = grps, indx_grp = 1:length(grps))
+df_yVals <- tibble(SizeClass = yVals, indx_sc = 1:length(yVals))
+
+df_stan <- left_join(df_stan, df_years, by = "year")
+df_stan <- left_join(df_stan, df_grps,  by = "geogroup")
+df_stan <- left_join(df_stan, df_yVals, by = "SizeClass")
+
+df_n <- df_stan %>%
+  group_by(indx_srv, indx_sc) %>%
+  summarise(n = n())
+
+max_sc <- length(yVals) # max(df_n$indx_sc)
+max_srv <- max(df_n$indx_srv)
+
+m_obs <- matrix(data = 0, nrow = max_srv, ncol = max_sc)
+for (i in 1:nrow(df_n)) {
+  m_obs[df_n$indx_srv[i],df_n$indx_sc[i]] <- df_n$n[i] 
+}
+
+df_srv <- df_stan %>%
+  group_by(indx_srv) %>%
+  summarise(
+    z1   = median(z1),
+    year = median(indx_year),
+    grp  = median(indx_grp)
+  )
+
+stan_dat <- list(
+  N = nrow(df_srv),               # surveys
+  J = max(df_srv$grp),            # locations
+  K = length(yCuts) + 1,          # fish size classes
+  L = max(df_srv$year),           # years of data 
+  cutoff = yCuts,                 # size class cut-offs
+  y    = m_obs,                   # observations per size class
+  x    = df_srv$z1,               # predictor variable
+  gloc = df_srv$grp,              # locations
+  yr   = df_srv$year              # year
+)
+
+fit <- stan(file = 'spatial_largerb0.stan', data = stan_dat, iter = 1000, warmup = 500, chains = 3, seed = 66, refresh = 250)
+
+save(fit, file = paste("location/",SpeciesName,".RData",sep=""))
+
+}
+
+```
+
+### STAN code for the spatial analyses 
+
+NOTE! This does not run in R, but has to be supplied as .stan file. All files are available in the stan_models subfolder
+
+``` {r, warning=FALSE, message=FALSE, echo = F, eval = F}
+
+// Shane A Richards 6/11/2018
+// includes a random effect associated with location, year, and survey
+// combines identical observations
+
+data {
+  int  <lower = 1> N; // number of surveys
+  int  <lower = 1> J; // number of locations
+  int  <lower = 1> K; // number of size classes
+  int  <lower = 1> L; // number of year classes
+  real <lower = 0>            cutoff[K-1]; // size class cut-offs
+  matrix[N,K]                 y;           // observed fish size classes
+  real                        x[N];        // observed predictor variable
+  int  <lower = 1, upper = J> gloc[N];     // observed location
+  int  <lower = 1, upper = L> yr[N];       // observed year (index only)
+}
+
+parameters {
+  real <lower =  1.5,   upper = 3.5> beta0;       // mean (log)size
+  real <lower = -0.50,  upper = 0.5> beta1;       // predictor of mean (log)size
+//  real <lower =  2.0,   upper = 5.0> beta0;       // mean (log)size for larger b0 analyses   
+  real <lower =  0.10,  upper = 0.30> sigma_size;  // variation in (log)sizes
+  real <lower =  0.001, upper = 1.0> sigma_gloc;  // variation among locations
+  real <lower =  0.001, upper = 1.5> sigma_yr;    // variation among years
+  real <lower =  0.001, upper = 1.0> sigma_srv;   // variation among years
+  real gloc_RE[J];  // estimated location-specific variation
+  real yr_RE[L];    // estimated year-specific variation
+  real srv_RE[N];   // estimated survey-specific variation
+}
+
+transformed parameters {
+}
+
+model {
+  vector[K-1] cpr;
+  vector[K] pr;
+  // real cpr[K-1] = 0.0;   // cumulative normal probability
+  // real pr[K] = 0.0;      // probability of observed size class
+  real mu;         // mean log fish size 
+  real eps = 0.01; // a small probability
+  real c1;
+  real c2;
+
+  c1 = (1.0 - eps);
+  c2 = eps/K;
+  
+  // generate location and year specific variation 
+  gloc_RE ~ normal(0.0, sigma_gloc); 
+  yr_RE   ~ normal(0.0, sigma_yr); 
+  srv_RE  ~ normal(0.0, sigma_srv); 
+
+  for (i in 1:N) { // for each survey 
+    mu = beta0 + beta1*x[i] + gloc_RE[gloc[i]] + yr_RE[yr[i]] + srv_RE[i];
+    
+    for (k in 1:(K-1)) {
+      cpr[k] = normal_cdf(cutoff[k], mu, sigma_size);
+    }
+    
+    pr[1] = c1*cpr[1] + c2;
+    for (k in 2:(K-1)) {
+      pr[k] = c1*(cpr[k] - cpr[k-1]) + c2;
+    }
+    pr[K] = c1*(1.0 - cpr[K-1]) + c2;
+    
+    for (k in 1:K) {
+      target += y[i,k]*log(pr[k]); // add the log-likelihood term
+    }
+  }
+}
+
+
+```
+
+### Extended data Fig.9: Spatial postanalyses processing: traceplots
+
+this code was used to assess convergence; individual species traceplots are not provided here, but can be reproduced using the chunks above and this code
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
+myspp <- sort(unique(df$TAXONOMIC_NAME))
+
+##Plot traceplots and posterior distributions
+
+model_params <- c("beta0", "beta1", "sigma_size", "sigma_gloc", "sigma_yr", "sigma_srv")
+l_trace <- vector("list", 1) # create an empty list
+l_plots <- vector("list", 1) # create an empty list
+
+#plot all diagnostics into one pdf file
+pdf(file="diagnostics.pdf",onefile=TRUE) 
+
+for (i in 1:length(myspp)) {
+
+SpeciesName <- myspp[i] #select the species 
+print(SpeciesName)
+print(i)
+
+#load saved outputs from individual Bayesian analyses
+load(file = paste("...save outputs here... /",SpeciesName,".RData",sep=""))
+
+l_trace[[i]] <- traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = 3)
+print(traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = 3))
+
+extracted <- rstan::extract(fit, pars=model_params)
+df_prm_pdf <- reshape2::melt(extracted, value.name="Parameter")
+
+# plot posterior distributions
+df_prm_pdf$L1 <- factor(df_prm_pdf$L1, levels = c("beta0", "beta1", 
+                                                      "sigma_size", "sigma_gloc", "sigma_yr", "sigma_srv"))
+    
+l_plots[[i]] <- ggplot(data=df_prm_pdf, aes(x = Parameter)) + 
+      labs(title = SpeciesName) +
+      geom_density(fill = "wheat") +
+      labs(
+        x    = "Parameter Value",
+        y    = "Probability density"
+      ) +
+      facet_wrap( ~ L1, scale = "free", ncol=3) +
+      theme_bw()
+
+print(ggplot(data=df_prm_pdf, aes(x = Parameter)) + 
+  labs(title = SpeciesName) +
+  geom_density(fill = "wheat") +
+  labs(
+    x    = "Parameter Value",
+    y    = "Probability density"
+  ) +
+  facet_wrap( ~ L1, scale = "free", ncol=3) +
+  theme_bw())
+
+print(i)
+}
+
+dev.off()
+
+```
+
+### Extract postorior distribution quantiles from individual Bayesian analyses
+
+this chunk does not need to be run because outputs are saved and provided separately
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
+load(file = "inputs/fish_data.RData")
+df <- main_data
+Species <- sort(unique(df$TAXONOMIC_NAME))
+
+##Now  get confidence intervals 
+model_params <- c("beta0", "beta1", "sigma_size", "sigma_gloc", "sigma_yr", "sigma_srv")
+l_CI    <- vector("list", 1) # create an empty list
+
+for (i in 1:length(Species)) {
+
+SpeciesName <- Species[i]
+print(SpeciesName)
+print(i)
+
+  load(file = paste("...save outputs here... /",SpeciesName,".RData",sep=""))
+  
+  extracted <- rstan::extract(fit, pars=model_params)
+  df_prm_pdf <- reshape2::melt(extracted, value.name="Parameter")
+  
+  df_summary <- df_prm_pdf %>% group_by(L1) %>% 
+    summarise(
+      n= n(), # samples
+      p.025 = quantile(Parameter, probs = 0.025),
+      p.100 = quantile(Parameter, probs = 0.100),
+      p.500 = quantile(Parameter, probs = 0.500),
+      p.900 = quantile(Parameter, probs = 0.900),
+      p.975 = quantile(Parameter, probs = 0.975)
+    )
+  
+  l_CI[[i]] <- df_summary
+}
+
+l_CI335 <- l_CI
+
+### And put results in a dataframe
+
+bet1ci = data.frame(NA, nrow = length(Species), ncol = 19)
+
+for (i in 1:length(Species)) {
+  
+SpeciesName <- Species[i]
+print(SpeciesName)
+print(i)
+
+  #beta0 intervals
+  bet1ci[i,1] <- l_CI[[i]]$p.025[1]
+  bet1ci[i,2] <- l_CI[[i]]$p.100[1]
+  bet1ci[i,3] <- l_CI[[i]]$p.500[1]
+  bet1ci[i,4] <- l_CI[[i]]$p.900[1]
+  bet1ci[i,5] <- l_CI[[i]]$p.975[1]
+  #beta1 intervals
+  bet1ci[i,6] <- l_CI[[i]]$p.025[2]
+  bet1ci[i,7] <- l_CI[[i]]$p.100[2]
+  bet1ci[i,8] <- l_CI[[i]]$p.500[2]
+  bet1ci[i,9] <- l_CI[[i]]$p.900[2]
+  bet1ci[i,10] <- l_CI[[i]]$p.975[2]
+  #sigma size intervals 
+  bet1ci[i,11] <- l_CI[[i]]$p.025[4]
+  bet1ci[i,12] <- l_CI[[i]]$p.100[4]
+  bet1ci[i,13] <- l_CI[[i]]$p.500[4]
+  bet1ci[i,14] <- l_CI[[i]]$p.900[4]
+  bet1ci[i,15] <- l_CI[[i]]$p.975[4]
+  
+  bet1ci[i,16] <- df %>% filter (TAXONOMIC_NAME == SpeciesName) %>% summarise(mid = first(midpoint))
+  bet1ci[i,17] <- df %>% filter (TAXONOMIC_NAME == SpeciesName) %>% summarise(Lmax = first(MaxLenFB))
+  bet1ci[i,18] <- df %>% filter (TAXONOMIC_NAME == SpeciesName) %>% summarise(Lmax = first(MaxSizeObs))
+  bet1ci[i,19] <- SpeciesName
+  
+}
+
+colnames(bet1ci) = c("b0_p025","b0_p10","b0_p50","b0_p90","b0_p975","p025","p10","p50","p90","p975","sigsize_p025","sigsize_p10","sigsize_p50","sigsize_p90","sigsize_p975","midpoint","MaxLenFB","MaxLenObs","species")
+
+save(bet1ci, file = "analysesOutputs/FinalSpaceBet1ci_335spp.RData")
+
+write.csv(bet1ci, file = "FinalSpaceCI.csv")
+
+```
+
+### Fig1A: second spatial Bayesian analysis, effects of temperature midpoint
+
+```{r}
+#rm(list = ls())
+load(file = "RDataOutputs/FinalSpaceBet1ci_335spp.RData")
+
+df <- bet1ci %>% dplyr::select (p025, p10, p50, p90, p975, midpoint, MaxLenObs, species)
+
+#make a data file for regression
+df_fit <- df %>%
+  mutate(
+   # SD1 = (p90-p10)/(2*1.281552),
+    SD = (p975-p025)/(2*1.96), #presumably we just need a z score for this
+    x = midpoint
+  ) %>%
+  select(Species = species, x, y = p50, SD)
+
+df_fit <- na.omit(df_fit)
+
+x_mean <- mean(df_fit$x) # rescaling value
+
+stan_dat <- list(
+  N    = nrow(df_fit),      # Number of species
+  x    = df_fit$x - x_mean, # transformed x-val 
+  SD   = df_fit$SD,         # SD of y-values
+  y    = df_fit$y           # y-values
+)
+
+#Run second baysian analysis on the overall slopes of all species
+
+#fit <- stan(file = 'fit_multi.stan', data = stan_dat,
+#  iter = 3500, warmup = 1000, chains = 4, seed = 111, thin = 10)
+#save(fit, file = "RDataOutputs/spacefit.RData")
+
+load(file = "RDataOutputs/spacefit.RData")
+
+#extract params, beta2 is a quadratic parameter and we can see that it is non-zero
+model_params <- c("beta0", "beta1", "sigma")
+
+# display the posterior distribution statistics
+#print(fit, pars = model_params, probs = c(0.025,0.5,0.975), digits=5)
+
+#traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = 4)
+
+l_params <- rstan::extract(fit, pars = model_params)
+
+df_prm_pdf <- reshape2::melt(l_params, value.name="Value")
+names(df_prm_pdf)[ncol(df_prm_pdf)] <- "Parameter"
+
+# plot posterior distributions
+df_prm_pdf$Parameter <- factor(df_prm_pdf$Parameter, 
+  levels = model_params)
+    
+#ggplot(data=df_prm_pdf, aes(x = Value, fill = Parameter)) + 
+#  geom_density() +
+#  labs(
+#    x    = "Value",
+#    y    = "Probability density"
+#  ) +
+#  facet_wrap( ~ Parameter, scale = "free") +
+#  theme_bw()
+
+## Now we create 1000 slopes of temperature responses along 100 values of tempreature ranging from min and max midpoints using 1000 posterior infered values. From these 1000 slopes we get 2.5, 50 and 97.5% quantiles to define the overall uncertainty of response 
+
+x_num <- 100
+max_iterations <- max(df_prm_pdf$iterations)
+m_mu <- matrix(data = 0, nrow = max_iterations, ncol = x_num)
+x_vals <- seq(from = min(df_fit$x), to = max(df_fit$x), length.out = x_num)
+
+for (i in 1:max_iterations) {
+  beta0 <- l_params$beta0[i]
+  beta1 <- l_params$beta1[i]
+  m_mu[i, ] <- beta0 + beta1*(x_vals - x_mean)
+}
+
+df_CI <- tibble(
+  x = x_vals,
+  mu_025 = 0,
+  mu_500 = 0,
+  mu_975 = 0
+)
+
+# Get quantile values for the uncertainty ranges
+for (i in 1:x_num) {
+  df_CI$mu_025[i] <- quantile(m_mu[ ,i], probs = 0.025)
+  df_CI$mu_500[i] <- quantile(m_mu[ ,i], probs = 0.500)
+  df_CI$mu_975[i] <- quantile(m_mu[ ,i], probs = 0.975)
+}
+
+#Or be consistent and use 80% 
+#for (i in 1:x_num) {
+#  df_CI$mu_025[i] <- quantile(m_mu[ ,i], probs = 0.1)
+#  df_CI$mu_500[i] <- quantile(m_mu[ ,i], probs = 0.500)
+#  df_CI$mu_975[i] <- quantile(m_mu[ ,i], probs = 0.9)
+#}
+
+#define the uncertainty polygon to be plotted
+df_polygon <- tibble(
+  x = c(df_CI$x,rev(df_CI$x)),
+  y = c(df_CI$mu_025,rev(df_CI$mu_975))
+)
+
+#assign colour to species depending on their resposes
+df_fit <- df_fit %>%
+  mutate(sig = ifelse(y < 0, ifelse(y + 2*SD < 0, -1, 0), ifelse(y - 2*SD > 0, 1, 0)))
+df_fit$sig <- factor(df_fit$sig)
+
+#or use my old way to colour and add error bars
+#first add p10 and p90 percentiles from teh Baysian fit
+df_fit$p10 <- bet1ci$p10[match(df_fit$Species, bet1ci$species)]
+df_fit$p90 <- bet1ci$p90[match(df_fit$Species, bet1ci$species)]
+
+df_fit$color <- 0
+df_fit$color[which(df_fit$p90 < 0)] <- -1
+df_fit$color[which(df_fit$p10 > 0)] <- 1 
+df_fit$color <- factor(df_fit$color)
+
+p1 <- ggplot(df_CI) +
+  geom_abline(intercept = 0, slope = 0, linetype = "dashed") +
+  geom_point(data = df_fit, aes(x = x, y = y, color = color)) +
+  geom_errorbar(data = df_fit, aes(x = x, ymin = p10, ymax = p90, color = color), width=0) +
+  geom_polygon(data = df_polygon, aes(x = x, y = y), fill = "#feb24c") +
+  geom_line(aes(x = x, y = mu_500)) +
+  labs(
+    x = expression("Midpoint temperature ("~degree~"C)"),
+    y = expression("Relative change in body length (per  "~degree~"C)")
+  ) +
+  ylim(-0.25, 0.25) +   # add ylim to remove the outlier 
+  #  xlim (-0.03, 0.03) +
+  scale_colour_manual(values=c("#de2d26", "grey70", "#3182bd")) +
+  guides(color=FALSE) +
+  geom_vline(xintercept = 23, linetype = "dashed") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    axis.text=element_text(size=12)
+  )
+
+
+p1
+
+```
+
+### Fig1B: second spatial Bayesian analysis, effects of maximum body size
+
+```{r}
+#rm(list = ls()) # clear memory
+
+#Load the space first Bayesian CI data (cleaned out, so it has 320 species)
+load(file = "RDataOutputs/FinalSpaceBet1ci_335spp.RData")
+df <- bet1ci %>% dplyr::select (p025, p10, p50, p90, p975, midpoint, MaxLenFB, MaxLenObs, species)
+
+########
+#Or if testing effects of 10% data exclusion
+#load(file = "RDataOutputs/testExcl.RData")
+#spp = testExcl$species
+#df_test <- df[-which(df$species %in% spp),]
+#df_test2 <- df[which(df$species %in% spp),]
+#replace 20 values with the df matrix with the new results without any data exclusion
+#df_test2$p025 <- testExcl$p025[match(df_test2$species, testExcl$species)]
+#df_test2$p10 <- testExcl$p10[match(df_test2$species, testExcl$species)]
+#df_test2$p50 <- testExcl$p50[match(df_test2$species, testExcl$species)]
+#df_test2$p90 <- testExcl$p90[match(df_test2$species, testExcl$species)]
+#df_test2$p975 <- testExcl$p975[match(df_test2$species, testExcl$species)]
+#df_excl <- rbind(df_test, df_test2)
+#save(df_excl, file = "RDataOutputs/df_exclusionTest.RData")
+#for the purposes of analyses below replace df with new dataset
+#df <- df_excl
+########
+
+df_fit <- df %>%
+  mutate(
+    SD = (p975-p025)/(2*1.96), 
+    x = log(MaxLenObs)
+  ) %>%
+  select(Species = species, x, y = p50, SD)
+
+x_mean <- mean(df_fit$x) # rescaling value
+
+stan_dat <- list(
+  N    = nrow(df_fit),      # Number of species
+  x    = df_fit$x - x_mean, # transformed x-val 
+  SD   = df_fit$SD,         # SD of y-values
+  y    = df_fit$y           # y-values
+)
+
+#fit <- stan(file = 'fit_multi.stan', data = stan_dat,
+#  iter = 3500, warmup = 1000, chains = 4, seed = 111, thin = 10)
+#save(fit, file = "RDataOutputs/Lengthfit.RData")
+#save(fit, file = "RDataOutputs/Lengthfit_exclusionTest.RData")
+
+## Load the main fit data set
+load(file = "RDataOutputs/Lengthfit.RData")
+
+model_params <- c("beta0", "beta1", "sigma")
+
+# display the posterior distribution statistics
+print(fit, pars=model_params, probs=c(0.025,0.5,0.975), digits=5)
+
+##Baysian results with 20 values replaced without data exclusion
+#          mean se_mean      sd     2.5%      50%    97.5% n_eff    Rhat
+#beta0 -0.00496 0.00007 0.00198 -0.00877 -0.00501 -0.00101   768 0.99744
+#beta1  0.01828 0.00012 0.00342  0.01157  0.01828  0.02469   874 1.00176
+#sigma  0.02805 0.00006 0.00180  0.02449  0.02807  0.03150   971 0.99840
+
+#Baysian result of the original analysis
+#          mean se_mean      sd     2.5%      50%    97.5% n_eff    Rhat
+#beta0 -0.00484 0.00007 0.00197 -0.00868 -0.00479 -0.00117   826 1.00231
+#beta1  0.01948 0.00011 0.00334  0.01330  0.01937  0.02585   973 0.99698
+#sigma  0.02811 0.00007 0.00180  0.02477  0.02811  0.03161   757 1.00706
+
+
+traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = 4)
+
+l_params <- rstan::extract(fit, pars = model_params)
+
+df_prm_pdf <- reshape2::melt(l_params, value.name="Value")
+names(df_prm_pdf)[ncol(df_prm_pdf)] <- "Parameter"
+
+# plot posterior distributions
+df_prm_pdf$Parameter <- factor(df_prm_pdf$Parameter, levels = model_params)
+    
+ggplot(data=df_prm_pdf, aes(x = Value, fill = Parameter)) + 
+  geom_density() +
+  labs(
+    x    = "Value",
+    y    = "Probability density"
+  ) +
+  facet_wrap( ~ Parameter, scale = "free") +
+  theme_bw()
+
+## Now run the same iterations as above to get 
+x_num <- 100
+max_iterations <- max(df_prm_pdf$iterations)
+m_mu <- matrix(data = 0, nrow = max_iterations, ncol = x_num)
+x_vals <- seq(from = min(df_fit$x), to = max(df_fit$x), length.out = x_num)
+
+for (i in 1:max_iterations) {
+  beta0 <- l_params$beta0[i]
+  beta1 <- l_params$beta1[i]
+  m_mu[i, ] <- beta0 + beta1*(x_vals - x_mean)
+}
+
+df_CI <- tibble(
+  x = x_vals,
+  mu_025 = 0,
+  mu_500 = 0,
+  mu_975 = 0
+) %>%
+mutate(x_orig = 10^x)
+
+for (i in 1:x_num) {
+  df_CI$mu_025[i] <- quantile(m_mu[ ,i], probs = 0.1)
+  df_CI$mu_500[i] <- quantile(m_mu[ ,i], probs = 0.500)
+  df_CI$mu_975[i] <- quantile(m_mu[ ,i], probs = 0.9)
+}
+
+df_polygon <- tibble(
+  x = c(df_CI$x,rev(df_CI$x)),
+  y = c(df_CI$mu_025,rev(df_CI$mu_975))
+) %>%
+mutate(x_orig = 10^x)
+
+df_fit <- df_fit %>% mutate(x_orig = 10^x)
+
+df_fit$p10 <- bet1ci$p10[match(df_fit$Species, bet1ci$species)]
+df_fit$p90 <- bet1ci$p90[match(df_fit$Species, bet1ci$species)]
+
+df_fit$color <- 0
+df_fit$color[which(df_fit$p90 < 0)] <- -1
+df_fit$color[which(df_fit$p10 > 0)] <- 1 
+df_fit$color <- factor(df_fit$color)
+
+ranlen = runif(n = length(df_fit$x), min = 0.05, max = 0.15)
+df_fit$x_rand <- df_fit$x + ranlen
+
+p2 <- ggplot(df_CI) +
+  geom_abline(intercept = 0, slope = 0, linetype = "dashed") +
+  geom_point(data = df_fit, aes(x = x_rand, y = y, color = color)) +
+  geom_errorbar(data = df_fit, aes(x = x_rand, ymin = p10, ymax = p90, color = color), width=0) +
+  geom_polygon(data = df_polygon, aes(x = x, y = y), fill = "#feb24c") +
+  geom_line(aes(x = x, y = mu_500)) +
+  labs(
+    x = expression("Maximum body length, cm"),
+    y = expression("Relative change in body length (per  "~degree~"C)")
+  ) +
+  scale_colour_manual(values=c("#de2d26", "grey70", "#3182bd")) +
+   ylim(-0.25, 0.25) + 
+  scale_x_continuous(breaks=c(log(20), log(50), log(150)), labels=c("20", "50", "150")) +
+  guides(color=FALSE) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    axis.text=element_text(size=12)
+  )
+p2
+
+plot_grid(p1, p2, labels = c("A", "B"))
+
+
+
+```
+
+### Table 1: statistics of spatial trends
+
+```{r, warning=F}
+load(file = "inputs/fish_temp_Mar.RData")
+load(file = "RDataOutputs/FinalSpaceBet1ci_335spp.RData")
+
+length(which(bet1ci$p90 < 0)) # 97 species have negative "significant' responses 
+length(which(bet1ci$p10 > 0)) # 64 have "significant" positive responses 
+
+length(which(bet1ci$p50 < 0)) # 189 negative responses in total
+length(which(bet1ci$p50 > 0)) # 146 positive
+
+increasing <- bet1ci[which(bet1ci$p10 > 0),]
+decreasing <- bet1ci[which(bet1ci$p90 < 0),]
+
+tempSpace <- bet1ci %>% filter (midpoint <= 23)
+tropSpace <- bet1ci %>% filter (midpoint > 23)
+VerytropSpace <- bet1ci %>% filter (midpoint > 26.5)
+
+SignTempSpp <- tempSpace$species[which(tempSpace$p10 > 0 | tempSpace$p90 <0)]
+SignTropSpp <- tropSpace$species[which(tropSpace$p10 > 0 | tropSpace$p90 <0)]
+
+length(which(tempSpace$p10 > 0)) #32(33)
+length(which(tempSpace$p10 > 0))/length(SignTempSpp) #0.49
+length(which(tempSpace$p90 < 0)) #35
+length(which(tempSpace$p90 < 0)) / length(SignTempSpp) #0.51
+
+length(which(tempSpace$p50 > 0)) #54(57)
+length(which(tempSpace$p50 > 0))/length(tempSpace$species) #0.49
+length(which(tempSpace$p50 < 0)) #57(59)
+length(which(tempSpace$p50 < 0))/length(tempSpace$species) #0.51
+
+length(which(tropSpace$p10 > 0)) #28(31)
+length(which(tropSpace$p10 > 0))/length(SignTropSpp)
+length(which(tropSpace$p90 < 0)) #61(62)
+length(which(tropSpace$p90 < 0))/length(SignTropSpp)
+
+length(which(tropSpace$p50 > 0)) #82(88)
+length(which(tropSpace$p50 > 0))/length(tropSpace$species)
+length(which(tropSpace$p50 < 0)) #126(130)
+length(which(tropSpace$p50 < 0))/length(tropSpace$species)
+
+length(which(VerytropSpace$p10 > 0)) #9
+length(which(VerytropSpace$p90 < 0)) #23
+
+length(which(VerytropSpace$p50 > 0)) #38
+length(which(VerytropSpace$p50 < 0)) #62
+
+
+
+#tropical
+median(tropSpace$p50[which(tropSpace$p10 > 0)]) # 0.037 
+median(tropSpace$p50[which(tropSpace$p90 < 0)]) # -0.040
+
+#beta1 = -0.02, exp(-0.02) = 0.980, means a 2% 
+
+median(tropSpace$p50[which(tropSpace$p50 > 0)]) # 0.022 
+median(tropSpace$p50[which(tropSpace$p50 < 0)]) # -0.023
+
+
+#temperate
+median(tempSpace$p50[which(tempSpace$p10 > 0)]) # 0.054 
+median(tempSpace$p50[which(tempSpace$p90 < 0)]) # -0.039
+
+median(tempSpace$p50[which(tempSpace$p50 > 0)]) # 0.030 
+median(tempSpace$p50[which(tempSpace$p50 < 0)]) # -0.031
+
+#total
+median(decreasing$p50) # -0.039
+median(increasing$p50) # 0.042
+
+median(tempChar$LWa, na.rm=T) ## 0.0177
+median(tempChar$LWb, na.rm=T) ## 3.008
+
+## if you are 15cm on average, 12 and 17 cm on edges
+0.0177*12^3.008
+0.0177*17^3.008
+0.0177*15^3.008
+
+(0.0177*15^3.008)/(0.0177*(15*1.04)^3.008)
+(0.0177*15^3.008)/(0.0177*(15*0.96)^3.008)
+
+tempChar <- fish_temp %>% group_by(TAXONOMIC_NAME) %>% summarise(tmin = min(meansst), tmax = max(meansst), range = tmax - tmin, medsize = median(SizeClass), meansize = mean(SizeClass), medwgt = median(weight, na.rm=T), midp = first(midpoint), LWa = first(LWa), LWb = first(LWb))
+
+tempCharSignTemp <- tempChar %>% filter (TAXONOMIC_NAME %in% SignTempSpp)
+median(tempCharSignTemp$range) #7.6
+median(tempCharSignTemp$meansize) #15.9
+
+tempCharSignTrop <- tempChar %>% filter (TAXONOMIC_NAME %in% SignTropSpp)
+median(tempCharSignTrop$range) #7.6
+median(tempCharSignTrop$meansize) #7.6
+
+
+#for temperate species 
+median(tempChar$range[which(tempChar$midp < 23)]) #mean temp range is 7.6C
+median(tempChar$medsize[which(tempChar$midp < 23)]) #and median size is 15cm
+mean(tempChar$meansize[which(tempChar$midp < 23)]) #and median size is 15cm
+median(tempChar$medwgt[which(tempChar$midp < 23)]) #53g
+
+#for temperate species 
+median(tempChar$range[which(tempChar$midp > 23)]) #mean temp range is 7.9C
+median(tempChar$medsize[which(tempChar$midp > 23)]) #and median size is 10cm
+mean(tempChar$meansize[which(tempChar$midp > 23)]) #and median size is 10cm
+median(tempChar$medwgt[which(tempChar$midp > 23)], na.rm=T) #25g
+
+median(tempChar$LWa[which(tempChar$midp > 23)], na.rm=T) #0.019
+median(tempChar$LWb[which(tempChar$midp > 23)], na.rm=T) #3.03
+
+median(tempChar$LWa[which(tempChar$midp < 23)], na.rm=T) #0.015
+median(tempChar$LWb[which(tempChar$midp < 23)], na.rm=T) #2.97
+
+cor.test(bet1ci$p50, bet1ci$MaxLenObs)
+
+a=1
+for (i  in 1:40) {
+  a=a*0.99
+}
+
+load(file = "RDataOutputs/TempPool_105spp.RData")
+notwarming = c("Jurien")
+
+AllParams <-AllParams %>% filter ((!locs %in% notwarming))
+
+
+## explore temporals 
+length(which(AllParams$betaloc50 > 0)) #56
+length(which(AllParams$betaloc50 > 0))/length(AllParams$betaloc50) #0.36
+length(which(AllParams$betaloc50 < 0))/length(AllParams$betaloc50)  #100
+length(unique(AllParams$species)) #77
+
+signiTemporal <- AllParams %>% filter (betaloc10 > 0 | betaloc90 < 0)
+length(unique(signiTemporal$species))
+
+length(which(AllParams$betaloc10 > 0))/length(signiTemporal$betazero50) #38%
+length(which(AllParams$betaloc90 < 0))/length(signiTemporal$betazero50) #62%
+
+(median(AllParams$betaloc50[which(AllParams$betaloc50 > 0)]))*100 #0.85
+(median(AllParams$betaloc50[which(AllParams$betaloc50 < 0)]))*100 #0.53
+
+(median(AllParams$betaloc50[which(AllParams$betaloc10 > 0)]))*100 #13.9%
+(median(AllParams$betaloc50[which(AllParams$betaloc90 < 0)]))*100 #9.4%
+
+
+```
+
+### Add thermal skew (Waldock et al.)
+
+```{r}
+load(file = "RdataOUtputs/FinalSpaceBet1ci.RData")
+skew <- read.csv(file = "inputs/thermal_skew.csv")
+
+bet1ci$skew <- skew$T_Skew_Observations[match(bet1ci$species, skew$SpeciesName)]
+bet1ci$skewConf <- skew$confidence[match(bet1ci$species, skew$SpeciesName)]
+bet1ci$Topt <- skew$Topt[match(bet1ci$species, skew$SpeciesName)]
+bet1ci$Topt_midp <- bet1ci$Topt - bet1ci$midpoint
+bet1ci$range <- abs(bet1ci$p90 - bet1ci$p10)
+                    
+bet1ci.t <- bet1ci %>% filter (skew > -10)
+
+temp2 <- bet1ci.t %>% filter (p10 > 0 | p90 < 0)
+
+
+cor.test(bet1ci$skew, bet1ci$p50)
+plot(bet1ci$skew, bet1ci$p50, pch=19, ylab = "Size-temperature slope", xlab = "Abundance-temperature skew", main = "Correlation between size-temp and abund-temp trends")
+abline(lm(p50 ~ skew, data = bet1ci))
+
+cor.test(temp2$skew, temp2$p50)
+plot(temp2$skew, temp2$p50, pch=19)
+
+
+temp3 <- bet1ci %>% filter (range < 0.17)
+
+cor.test(temp3$skew, temp3$p50)
+plot(temp3$skew, temp3$p50, pch=19)
+abline(lm(p50 ~ skew, data = temp3))
+
+cor.test(bet1ci$Topt, bet1ci$p50)
+plot(bet1ci$Topt, bet1ci$p50, pch=19)
+
+#if we look only at those that have strong skew?
+temp <- bet1ci %>% filter (skew < -1 | skew > 1)
+
+cor.test(temp$skew, temp$p50)
+plot(temp$skew, temp$p50, pch=19)
+
+temp3 <- be
+
+length(which(bet1ci$skew <0 & bet1ci$p50 <0)) #84 (129)
+length(which(bet1ci$skew <0 & bet1ci$p50  > 0)) #55 (92)
+length(which(bet1ci$skew > 0 & bet1ci$p50  > 0)) #15 (34)
+length(which(bet1ci$skew > 0 & bet1ci$p50  < 0)) #18 (45)
+
+```
+
+### TEMPORAL ###
+
+### Add mpa data to the main dataset 
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=F, eval = F}
+
+load(file = "inputs/VertData2018Cleaned_Mar.RData")
+length(unique(VertData$SiteCode))  # this dataset has 2568 unique codes 
+
+#load(file="inputs/sitesMPAstatus.RData") #dataset create above
+#length(unique(sites_rls$SiteCode)) #the site summary data has 2577 codes
+
+mpa_checked <- read.csv(file = "inputs/RLSMPAsitesWithMPA.csv") #checked MPA status dataset (from Graham)
+mpa_checked$mpaFinal <- NA
+mpa_checked$mpaFinal[which(mpa_checked$MPA == "Fishing")] <- 0 #133
+mpa_checked$mpaFinal[which(mpa_checked$MPA == "No take")] <- 1 #159
+mpa_checked$mpaFinal[which(mpa_checked$MPA == "Restricted take")] <- 0 #104
+
+#add extra variable to the main rls_all data set to reflect site protection. This is only for Tasmanian sites
+VertData$mpa <- mpa_checked$mpaFinal[match(VertData$`Site name`, mpa_checked$sitename)]
+
+#Are there any sites that still have NA's for the MPA data? 
+sites_mpa_status <- VertData %>% group_by(SiteCode) %>% summarise(mpa = first(mpa))
+length(which(is.na(sites_mpa_status$mpa) == TRUE)) # yes, 716 out of 2568 sites
+
+# I guess we have to assume that if there is no info for the site then it is not protected
+#VertData$mpa[is.na(VertData$mpa)] <- 0
+
+save(VertData, file = "inputs/VertDataWithMPA_marNew.RData")
+
+```
+
+### Generate and map long term location datafile for people to check 
+
+```{r}
+load(file = "inputs/VertDataWithMPA_marNew.RData")
+
+VertData$Locs <- substr(VertData$Location, 1,6)
+
+#Pool Bass Strait and Kent Group togehter as they are very close to each other. Also pool Port Sydney and Sydney
+VertData$Loc=ifelse(VertData$Locs=="Bass S"|VertData$Locs=="Kent G", "BassSt", as.character(VertData$Locs)) 
+badlocs <- c("Tasman", "North ")
+
+yearsPerLoc <- VertData %>% filter (!Loc %in% badlocs) %>% group_by(Loc) %>% summarise (miny = min(year), maxy = max(year), timespan = maxy - miny, LocationFirst = first(Location), LocationLast = last(Location), lattmean = mean(SiteLat), lattsd = sd(SiteLat), longmean = mean(SiteLong), longsd = sd(SiteLong), counts = n(), spp = n_distinct(TAXONOMIC_NAME), years = n_distinct(year), geogr = first(geogroup)) %>% filter (timespan > 14) %>% filter (years > 10)
+longtermLoc <- yearsPerLoc$Loc
+longtermGeogr <- yearsPerLoc$geogr
+#save(yearsPerLoc, file = "inputs/yearsPerLoc.RData")
+
+VertData_temporal <- VertData %>% filter (Loc %in% longtermLoc)
+
+save(VertData_temporal, file = "inputs/VertData_Temporal.RData")
+
+yearsPerLoc$LocText <- as.character(yearsPerLoc$Loc)
+
+load(file = "inputs/australia.RData")
+
+ggmap(australia, extent = "panel", legend = "bottomright") +
+  geom_point(aes(x = yearsPerLoc$longmean, y = yearsPerLoc$lattmean), data = yearsPerLoc, size = (yearsPerLoc$spp/40), color = "orange") +
+#   geom_text(aes(label= yearsPerLoc$Loc), nudge_y = 0.001, size = 2) + 
+  ggtitle("Long term locations") + xlab("Longitutde") + ylab("Latitude")
+
+## write site data for Graham to check
+#sites_mpa_status_longterm <- VertData %>% filter (Loc %in% longtermLoc) %>% group_by(SiteCode) %>% summarise(mpa = first(mpa), sitename = first(`Site name`), loc_short = first(Loc), loc_full = first(Location), latt = mean(SiteLat), long = mean(SiteLong)) %>% arrange(loc_full)
+#write.csv(sites_mpa_status_longterm, file = "inputs/sitesWithMpa.csv")  
+
+```
+
+### Long term SST trends 
+
+```{r, eval = F, echo = F}
+## calculate SST trends per long term location 
+load(file  = "inputs/meangeoSST.RData")
+load(file = "inputs/yearsPerLoc.RData")
+
+longtermLoc <- yearsPerLoc$Loc
+longtermGeogr <- yearsPerLoc$geogr
+
+sst_long <- meangeoSST %>% filter (geogroup %in% longtermGeogr) 
+sst_long$Loc <- yearsPerLoc$Loc[match(sst_long$geogroup, yearsPerLoc$geogr)]
+
+TempTrendReg = matrix(NA, nrow = length(longtermLoc), ncol = 4)
+
+for (i in 1:length(longtermLoc)) {
+  
+oneloc <- sst_long %>% filter (Loc == longtermLoc[i])
+print(i)
+print(longtermLoc[i])
+
+tempTrend <- lm(annSST ~ year, data = oneloc)
+
+TempTrendReg[i,c(1:2)] <- round(tempTrend[[1]],4)
+TempTrendReg[i,3] <- round(anova(tempTrend)$'Pr(>F)'[1],4)
+TempTrendReg[i,4] <- longtermLoc[i]
+
+}
+
+```
+
+### Setup various dataframes
+
+df - main dataframe of all species and 12 locations 
+dfMPA9 - data with 9 locations only inside MPA
+df9 - data with 9 locations only outside MPA
+
+```{r, eval = F}
+
+load(file="inputs/VertData_Temporal.RData")
+VertData_temporal$mpa <- mpa_checked$mpaFinal[match(VertData_temporal$`Site name`, mpa_checked$sitename)]
+
+midpointSize <- VertData_temporal %>% group_by(TAXONOMIC_NAME) %>% summarise (midp = first(midpoint), Lmax = first(MaxLenFB))
+save(midpointSize, file = "inputs/midpointSize.RData")
+
+#check that MPA status is correct
+mpatest <- VertData_temporal %>% group_by(SiteCode) %>% summarise(loc = first(Loc), mpa = first(mpa), name = first(`Site name`)) 
+
+dfMPA9 <- VertData_temporal %>% filter (mpa == 1)
+save (dfMPA9, file = "inputs/FishSizeTemp9locsMPA_April.RData")
+
+dfNoMPA9 <- VertData_temporal %>% filter (mpa == 0)
+save (dfNoMPA9, file = "inputs/FishSizeTemp9locsNoMPA_April.RData")
+
+```
+
+### Plot sizes through time 
+
+```{r, eval = F, echo=F}
+load(file = "inputs/FishSizeTemp9locsNoMPA_April.RData")
+
+df_temp <- dfNoMPA9
+
+## Filter out rare species using same criteria
+df_summary <- df_temp %>%
+  group_by(TAXONOMIC_NAME, Loc, year) %>%
+  summarise(records = n()) %>%
+  filter(records >= 20) # must have 20 obs per year at a location
+
+# must be at least 20 obervations at a site-mpa within a given year
+df_ok <- semi_join(df_temp, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc", "year"))
+
+df_summary <- df_ok %>%
+  group_by(TAXONOMIC_NAME, Loc) %>%
+  summarise(
+    num_years = length(unique(year)) # years per location
+  ) %>%
+  filter(num_years >= 7) %>% # must have 10 years at a loc per mpa grp
+  arrange(TAXONOMIC_NAME, Loc)
+
+# remove data with less than 10 yrs
+df_ok <- semi_join(df_ok, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc")) 
+
+Species <- sort(unique(df_ok$TAXONOMIC_NAME))
+length(Species)
+
+
+for (aa in 1:length(Species)) {
+
+ SpeciesName <- Species[aa]
+ print(SpeciesName)
+ print(aa)
+ 
+ #prepare data 
+ df_ok$y <- log(df_ok$SizeClass)
+  df_fit <- df_ok %>% filter(TAXONOMIC_NAME == SpeciesName)
+  
+  ## plot sizes
+  df_means <- df_fit %>%
+    group_by(year, Loc) %>%
+    summarise(mu = mean(y), n = n(), ln10 = log10(n)) %>%
+    arrange(year)
+ 
+  sizeplot <- ggplot(df_fit, aes(x = year, y = y)) +
+    geom_point(color = "grey80", size = 1.5) + # observed data
+    geom_point(data = df_means, aes(x = year, y = mu, size = ln10), color = "dark red") +
+    ylim(0.5, 4.5) +
+    facet_wrap( ~ Loc, scale = "free") +
+    labs(
+      title = SpeciesName,
+      size = "Counts\n(log10)", x = "Year", y = "log Size (cm)") +
+    theme_bw()
+
+ggsave (filename = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/MainResults/sizeTemporalPlots/",SpeciesName,"NNoMPA.jpg",sep=""), plot = sizeplot, width = 8, height = 7)    
+
+}
+
+```
+
+
+### Bayesian code for analyses with year RE but no MPA: all MPA combinations
+This code was used to run the main analyses on GEM
+
+```{r, eval = F}
+# packages used during this analysis
+library(tidyverse)
+library(lme4)
+library(rstan)
+#rm(list = ls()) # clear memory
+
+#load(file="inputs/FishSizeTemp9locsNoMPA_April.RData")
+#df <- dfNoMPA9
+
+#load(file="inputs/FishSizeTemp9locsMPA_April.RData")
+#df <- dfMPA9
+
+#If using for pooled data from inside and outside MPA
+load(file = "inputs/VertData_Temporal.RData")
+df <- VertData_temporal
+
+# set factors
+df$TAXONOMIC_NAME <- factor(df$TAXONOMIC_NAME)
+df$FLoc <- factor(df$Loc)
+df$Size <- factor(as.character(round(df$SizeClass, 1)), 
+  levels = c("2.5",  "5", "7.5", "10", "12.5", "15", "20", "25", "30",
+    "35", "37.5", "40", "50", "62.5", "75", "87.5", "90","100", "112.5",
+    "125", "137.5", "150", "162.5", "175", "187.5", "200", "250", "300")) 
+
+
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME) %>%
+  summarise(
+    records = n(),
+    size    = round(mean(SizeClass), 2),
+    years   = length(unique(year)),
+    Locs    = length(unique(Loc))
+  ) %>%
+  arrange(desc(records)) # sort by number of records
+
+# extract data on observed size classes
+yVals <- sort(unique(df$SizeClass)) # fish size classes
+I     <- length(yVals)              # number of fish size classes
+yCuts <- rep(0, I-1)                # fish sizes that split size classes
+for (i in 2:I) {
+  yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+}
+
+# decide which records to retain for analyses
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME, Loc, year) %>%
+  summarise(records = n()) %>%
+  filter(records >= 20) # must have 20 obs per year at a location
+
+# must be at least 20 obervations at a site-mpa within a given year
+df_ok <- semi_join(df, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc", "year"))
+
+df_summary <- df_ok %>%
+  group_by(TAXONOMIC_NAME, Loc) %>%
+  summarise(
+    num_years = length(unique(year)) # years per location
+  ) %>%
+  filter(num_years >= 7) %>% # must have 10 years at a loc per mpa grp
+  arrange(TAXONOMIC_NAME, Loc)
+
+# remove data with less than 10 yrs
+df_ok <- semi_join(df_ok, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc")) 
+#save(df_ok, file = "DataFor9locsOutMPA.RData")
+#save(df_ok, file = "inputs/DataFor9locsPooled.RData")
+
+ok_species <- sort(unique(df_ok$TAXONOMIC_NAME)) # show species that satisfy criteria
+length(ok_species) #91 spp
+#save(ok_species, file = "Temporal_OutsMPA71spp.RData")
+#save(ok_species, file = "Temporal_InMPA81spp.RData")
+#save(ok_species, file = "Temporal_Pooled105spp.RData")
+
+for (i in 1:length(ok_species)) {
+
+focal_species <- ok_species[i] # choose a species to analyse
+print(i)
+print(focal_species)
+
+# create the data structures needed to fit the model in rstan
+df_stan <- df_ok %>% 
+  filter(TAXONOMIC_NAME == focal_species) %>%
+  mutate(yearC = year - 2018) %>% # rescale year for fitting
+  select(year, month, day, Loc, yearC, SizeClass) %>%
+  mutate(
+    survey_date = as.Date(paste(year, month, day, sep = "-")),
+    survey = paste(survey_date, Loc, sep = "-")
+  ) %>%
+  arrange(survey) %>%
+  mutate(indx_srv = as.integer(factor(survey)))
+
+# add random factor indexes for year, location, and sample
+years    <- sort(unique(df_stan$year))
+df_years <- tibble(year = years, indx_year = 1:length(years))
+locs    <- sort(unique(df_stan$Loc))
+df_locs <- tibble(Loc = locs, indx_loc = 1:length(locs))
+df_yVals <- tibble(SizeClass = yVals, indx_sc = 1:length(yVals))
+
+df_stan <- left_join(df_stan, df_years, by = "year")
+df_stan <- left_join(df_stan, df_locs,  by = "Loc")
+df_stan <- left_join(df_stan, df_yVals, by = "SizeClass")
+
+# create the matrix of counts (row = survey, column = size class)
+df_n <- df_stan %>%
+  group_by(indx_srv, indx_sc) %>%
+  summarise(n = n())
+
+max_sc <- length(yVals) # max(df_n$indx_sc)
+max_srv <- max(df_n$indx_srv)
+
+m_obs <- matrix(data = 0, nrow = max_srv, ncol = max_sc)
+for (i in 1:nrow(df_n)) {
+  m_obs[df_n$indx_srv[i],df_n$indx_sc[i]] <- df_n$n[i] 
+}
+
+# create survey data
+df_srv <- df_stan %>%
+  group_by(indx_srv) %>%
+  summarise(
+    yearC= median(yearC),
+    year = median(indx_year),
+    Loc  = median(indx_loc)
+  )
+
+
+# create the list of data passed to rstan
+stan_dat <- list(
+  N      = nrow(df_srv),            # surveys
+  J      = max(df_srv$Loc),         # locations
+  K      = length(yCuts) + 1,       # fish size classes
+  L      = max(df_srv$year),        # years of data 
+  cutoff = yCuts,                   # size class cut-offs
+  y      = m_obs,                   # observations per size class
+  x      = df_srv$yearC,            # predictor variable 1 (years ago)
+  i_loc  = as.integer(df_srv$Loc),  # locations
+  i_yr   = as.integer(df_srv$year)  # year
+)
+
+
+fit <- stan(file = 'model1_temporalNoMPA.stan', data = stan_dat, 
+    iter = 1000, warmup = 500, chains = 3, refresh = 200,
+    control = list(max_treedepth = 15))
+
+save(fit, file = paste("output/NewTemporal/pooled/",focal_species,"_pool.RData",sep=""))
+
+}
+
+```
+
+### STAN code for temporal analyses 
+
+```{r, eval = F}
+// Shane A. Richards 20/12/2018
+// fits locations independently
+// includes random effects associated with year, and survey
+// combines identical observations (i.e. uses counts, not single observations)
+
+data {
+  int  <lower = 1>            N;           // number of surveys
+  int  <lower = 1>            J;           // number of locations
+  int  <lower = 1>            K;           // number of size classes
+  int  <lower = 1>            L;           // number of year classes
+  real                        cutoff[K-1]; // size class cut-offs
+  matrix[N,K]                 y;           // observed fish size classes (counts)
+  real                        x[N];        // centred year (differs per location)
+//  int  <lower = 0, upper = 1> mpa[N];      // observed predictor mpa
+  int  <lower = 1, upper = J> i_loc[N];    // location (index only)
+  int  <lower = 1, upper = L> i_yr[N];     // observed year (index only)
+}
+
+parameters {
+  real <lower =  1.0, upper = 4.0> beta_0[J];   // log(mean size) for each location
+  real <lower =  -0.10, upper = 0.10> beta_yr[J];  // annual change on log(size) for each location
+//  real <lower =  -0.50, upper = 0.50> beta_mpa;    // change in log(mean size) when in mpa
+  real <lower =  0.100, upper = 0.40> sigma_size;  // variation in (log)size
+  real <lower =  0.001, upper = 0.50> sigma_yr;    // random variation among years
+  real <lower =  0.001, upper = 0.50> sigma_srv;   // random variation among surveys
+  real yr_RE[L];    // estimated year-specific variation (random effect)
+  real srv_RE[N];   // estimated survey-specific variation (random effect)
+}
+
+transformed parameters {
+}
+
+model {
+  vector[K-1] cpr;       // cumulative probabilties
+  vector[K]   pr;        // probabilities for each size class
+  real tmp[J];           // probability of observed size class
+  real mu;               // mean log fish size 
+  real eps = 0.01;       // a small probability for random size class
+  real c1;               // fraction of fish that do not fit distribution model
+  real c2;               // probability randomly placed in size class
+
+  c1 = (1.0 - eps);
+  c2 = eps/K;
+  
+  // beta_0   ~ normal(3,0.5); // location-specific prior size (log)
+  // beta_yr  ~ normal(0,0.1); // location-specific prior slope
+  // beta_mpa ~ normal(0,0.1); // prior mpa effect
+  yr_RE    ~ normal(0.0, sigma_yr);  // random interannual differences
+  srv_RE   ~ normal(0.0, sigma_srv); // random survey differences
+
+  for (i in 1:N) { // for each survey 
+    // calculate mean body size for the survey, given location, year, and survey
+    mu = beta_0[i_loc[i]] + beta_yr[i_loc[i]]*x[i] + yr_RE[i_yr[i]] + srv_RE[i];
+
+
+    // calculate cumulative probabilities of observing fish in each size class
+    for (k in 1:(K-1)) {
+      cpr[k] = normal_cdf(cutoff[k], mu, sigma_size); // cumulative probability
+    }
+    // calculate probabilities of observing fish in each size class (with random eps)
+    pr[1] = c1*cpr[1] + c2; // probability observe in smallest size class
+    for (k in 2:(K-1)) {
+      pr[k] = c1*(cpr[k] - cpr[k-1]) + c2; // intermediate size classes
+    }
+    pr[K] = c1*(1.0 - cpr[K-1]) + c2; // probability of observing in largest size class
+    
+    for (k in 1:K) {
+      target += y[i,k]*log(pr[k]); // add the log-likelihood term for each size class
+    }
+  }
+}
+
+generated quantities {
+// int<lower=0, upper=1> y_new[T_new];
+// for (t in 1:T_new){
+//   y_new[t] = bernoulli_rng(p);
+// }
+}
+
+
+```
+
+### Process Bayesian outputs: traceplots, get params
+
+Run the previous chunk with the relevant dataset to get df_ok data
+
+```{r, eval = F}
+#load(file = "Species9locsYearREoutMPA.RData")  ## list of species for the analyses
+#load(file = "DataFor9locsOutMPA.RData") #Selected datafile
+
+#ok_species <- sort(unique(df_ok$TAXONOMIC_NAME)) # show species that satisfy criteria
+#ok_species <- as.character(ok_species)
+#ok_species <- ok_species[-which(ok_species == "Trachinops caudimaculatus")]
+
+load(file = "inputs/midpointSize.RData")
+
+length(ok_species)
+
+AllParams <- as.data.frame(matrix(NA, ncol= 27, nrow = 0))
+
+pdf(file="C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/NewTemp_OutMPA.pdf", onefile=TRUE) 
+
+for (aa in 1:length(ok_species)) {
+  
+SpeciesName <- ok_species[aa]
+print(aa)
+print(SpeciesName)
+
+load(file = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/output/NewTemporal/outMPA/",SpeciesName,"_noMPA.RData",sep=""))
+
+# create the data structures needed to fit the model in rstan
+df_stan <- df_ok %>% 
+  filter(TAXONOMIC_NAME == SpeciesName) %>%
+  mutate(yearC = year - 2018) %>% # rescale year for fitting
+  select(year, month, day, Loc, yearC, SizeClass) %>%
+  mutate(
+    survey_date = as.Date(paste(year, month, day, sep = "-")),
+    survey = paste(survey_date, Loc, sep = "-")
+  ) %>%
+  arrange(survey) %>%
+  mutate(indx_srv = as.integer(factor(survey)))
+
+# add random factor indexes for year, location, and sample
+years    <- sort(unique(df_stan$year))
+df_years <- tibble(year = years, indx_year = 1:length(years))
+locs    <- sort(unique(df_stan$Loc))
+df_locs <- tibble(Loc = locs, indx_loc = 1:length(locs))
+df_yVals <- tibble(SizeClass = yVals, indx_sc = 1:length(yVals))
+
+df_stan <- left_join(df_stan, df_years, by = "year")
+df_stan <- left_join(df_stan, df_locs,  by = "Loc")
+df_stan <- left_join(df_stan, df_yVals, by = "SizeClass")
+
+# create the matrix of counts (row = survey, column = size class)
+df_n <- df_stan %>%
+  group_by(indx_srv, indx_sc) %>%
+  summarise(n = n())
+
+max_sc <- length(yVals) # max(df_n$indx_sc)
+max_srv <- max(df_n$indx_srv)
+
+m_obs <- matrix(data = 0, nrow = max_srv, ncol = max_sc)
+for (i in 1:nrow(df_n)) {
+  m_obs[df_n$indx_srv[i],df_n$indx_sc[i]] <- df_n$n[i] 
+}
+
+# create survey data
+df_srv <- df_stan %>%
+  group_by(indx_srv) %>%
+  summarise(
+    yearC= median(yearC),
+    year = median(indx_year),
+    Loc  = median(indx_loc)
+  )
+
+
+n_Locs <- max(df_srv$Loc)
+# create a list of parameter names to investigate
+model_params <- c(paste("beta_0[",1:n_Locs,"]",sep = ""),
+  paste("beta_yr[",1:n_Locs,"]",sep = ""), 
+  "sigma_size", "sigma_yr", "sigma_srv")
+
+# display the posterior distribution statistic
+#print(fit, pars=model_params, probs=c(0.025,0.1,0.5,0.9,0.975), digits=3)
+
+print(traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = n_Locs))
+
+# extract the parameter estimates into a list
+l_params <- rstan::extract(fit, pars = model_params)
+
+# convert list to a data frame
+df_prm_pdf <- reshape2::melt(l_params, value.name="Parameter") 
+
+  df_summary <- df_prm_pdf %>% group_by(L1) %>% 
+    summarise(
+      n= n(), # samples
+      p.025 = quantile(Parameter, probs = 0.025),
+      p.100 = quantile(Parameter, probs = 0.100),
+      p.500 = quantile(Parameter, probs = 0.500),
+      p.900 = quantile(Parameter, probs = 0.900),
+      p.975 = quantile(Parameter, probs = 0.975)
+    )
+
+# plot posterior distributions
+df_prm_pdf$L1 <- factor(df_prm_pdf$L1, levels = model_params)
+    
+params <- ggplot(data=df_prm_pdf, aes(x = Parameter)) + 
+  labs(title = SpeciesName) +
+  geom_density(fill = "wheat") +
+  labs(
+    x    = "Value",
+    y    = "Probability density"
+  ) +
+  facet_wrap( ~ L1, scale = "free", ncol = max(3,max(df_srv$Loc))) +
+  theme_bw()
+
+print(params)
+
+## Extract posteriors into a list
+test <- list()
+
+  test$betazero025 <- df_summary$p.025[c(1:n_Locs)]
+  test$betazero10 <- df_summary$p.100[c(1:n_Locs)]
+  test$betazero50 <- df_summary$p.500[c(1:n_Locs)]
+  test$betazero90 <- df_summary$p.900[c(1:n_Locs)]
+  test$betazero975 <- df_summary$p.975[c(1:n_Locs)]
+  
+  test$betaloc025 <- df_summary$p.025[c((n_Locs+1):(n_Locs*2))]
+  test$betaloc10 <- df_summary$p.100[c((n_Locs+1):(n_Locs*2))]
+  test$betaloc50 <- df_summary$p.500[c((n_Locs+1):(n_Locs*2))]
+  test$betaloc90 <- df_summary$p.900[c((n_Locs+1):(n_Locs*2))]
+  test$betaloc975 <- df_summary$p.975[c((n_Locs+1):(n_Locs*2))]
+  
+  test$sigma_size025 <- df_summary$p.025[n_Locs*2 + 1]
+  test$sigma_size10 <- df_summary$p.100[n_Locs*2 + 1]
+  test$sigma_size50 <- df_summary$p.500[n_Locs*2 + 1]
+  test$sigma_size90 <- df_summary$p.900[n_Locs*2 + 1]
+  test$sigma_size975 <- df_summary$p.975[n_Locs*2 + 1]
+  
+  test$sigma_year025 <- df_summary$p.025[n_Locs*2 + 2]
+  test$sigma_year10 <- df_summary$p.100[n_Locs*2 + 2]
+  test$sigma_year50 <- df_summary$p.500[n_Locs*2 + 2]
+  test$sigma_year90 <- df_summary$p.900[n_Locs*2 + 2]
+  test$sigma_year975 <- df_summary$p.975[n_Locs*2 + 2]
+  
+  test$sigma_surv025 <- df_summary$p.025[n_Locs*2 + 3]
+  test$sigma_surv10 <- df_summary$p.100[n_Locs*2 + 3]
+  test$sigma_surv50 <- df_summary$p.500[n_Locs*2 + 3]
+  test$sigma_surv90 <- df_summary$p.900[n_Locs*2 + 3]
+  test$sigma_surv975 <- df_summary$p.975[n_Locs*2 + 3]
+
+  test$locs <- as.character(locs)
+  test$species <- as.character(SpeciesName)
+  tt <- as.data.frame(test)
+  
+AllParams <- rbind(AllParams, tt)
+
+}
+
+dev.off()
+
+
+AllParams$midpoint <- midpointSize$midp[match(AllParams$species, midpointSize$TAXONOMIC_NAME)]
+AllParams$Lmax <- midpointSize$Lmax[match(AllParams$species, midpointSize$TAXONOMIC_NAME)]
+
+#columns are incorrectly named= sigma_year and sigma_survey should be swapped
+temp <- colnames(AllParams)
+
+correct_columns <- c(temp[c(1:15)],temp[c(21:25)],temp[c(16:20)],temp[c(26:29)])
+colnames(AllParams) <- correct_columns
+colnames(AllParamsIn) <- correct_columns
+colnames(AllParamsOut) <- correct_columns
+
+###
+
+#save(AllParams, file = "RdataOutputs/TempPool_105spp.RData")
+#AllParamsOut <- AllParams
+#save(AllParamsOut, file = "RdataOutputs/TempOut_74spp.RData")
+#AllParamsIn <- AllParams
+#save(AllParamsIn, file = "RdataOutputs/TempIn_84spp.RData")
+
+```
+
+### Plot trends per location
+
+Outside MPA correlation between location SST and species size slopes is -0.76, p = 0.018 with only 9 locations
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=FALSE}
+load(file = "RdataOutputs/TempPool_105spp.RData") 
+load(file = "RdataOutputs/TempOut_74spp.RData")
+AllParams <- AllParamsOut
+load(file = "RdataOutputs/TempIn_84spp.RData")
+AllParams <- AllParamsIn
+
+#exclude species with very large CI
+#AllParams$cirange <- abs(AllParams$betaloc90 - AllParams$betaloc10)
+#plot(AllParams$cirange)
+#AllParams <- AllParams %>% filter(cirange < 0.045) # 10 cases (149 from 159)
+
+AllParams$color <- "grey"
+AllParams$color[which(AllParams$betaloc90 < 0)] <- "red" 
+AllParams$color[which(AllParams$betaloc10 > 0)] <- "blue" 
+
+#ggplot(bet1ci, aes(midpoint, p50, color = color)) +
+ggplot(AllParams, aes(midpoint, betaloc50, color = color)) +
+  geom_hline(yintercept = 0) + 
+#  geom_vline(xintercept = 23) + 
+#  ylim(-0.06, 0.06) +   # add ylim to remove the outlier 
+#  xlim (-0.03, 0.03) +
+  geom_point() +
+  geom_errorbar(aes(ymin = betaloc10, ymax = betaloc90), size = 0.5) +
+  scale_color_manual(values = c("blue", "grey", "red"),
+                     labels=c("increasing", "no change", "decreasing"),
+                     guides(name = "size response")) +
+  guides(color=FALSE) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank()
+  ) +
+#  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+#  panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  ggtitle("Final: Annual change in species body size") + ## change to OUTSIDE if using outside MPA data
+  labs(
+    x    = "Species midpoint temperature",
+    y    = "Slope of the annual change in body size (0.01 means ca 1% change per year)"
+  ) +
+  facet_wrap( ~ locs, scale = "free", ncol = 3) +
+NULL
+```
+
+### Plot trends per species across locations
+
+```{r}
+#load(file = "RdataOutputs/AllParams_YearREoutMPA_91spp.RData")
+load(file = "RdataOutputs/AllParams_YearREinMPA_22spp.RData")
+
+sppp <- unique(AllParams$species)
+
+pdf(file="C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/outsideMPA_speciesYearRE.pdf", onefile=TRUE) 
+
+for (i in 1:length(sppp)) {
+  print(i)
+  temp <- AllParams %>% filter (species == sppp[i])
+  
+plot1 <- ggplot(temp, aes(locs, betaloc50, color = color)) +
+  geom_hline(yintercept = 0) + 
+#  geom_vline(xintercept = 23) + 
+  geom_point() +
+  geom_errorbar(aes(ymin = betaloc10, ymax = betaloc90)) +
+  scale_color_manual(values = c("blue", "grey", "red"),
+                     labels=c("increasing", "no change", "decreasing"),
+                     guides(name = "size response")) +
+  theme_bw() +
+  ggtitle("Annual change in species body size outside MPA") + 
+  labs(
+    x    = "Species midpoint temperature",
+    y    = "Slope of the annual change in body size"
+  ) +
+  facet_wrap( ~ species, scale = "free", ncol = 3) +
+NULL
+
+print(plot1)
+
+}
+
+dev.off()
+```
+
+### Combine three types of temporal Bayesian analyses into one datafile
+
+```{r}
+###Outside MPA
+load(file = "RdataOutputs/TempPool_105spp.RData") 
+AllParamsPool <-AllParams
+rm(AllParams)
+
+load(file = "RdataOutputs/TempIn_84spp.RData")
+load(file = "RdataOutputs/TempOut_74spp.RData")
+
+#exclude species with very large CI
+AllParamsPool$cirange <- abs(AllParamsPool$betaloc90 - AllParamsPool$betaloc10)
+plot(AllParamsPool$cirange)
+AllParamsPool <- AllParamsPool %>% filter(cirange < 0.045) %>% select(species, locs, betaloc025, betaloc10, betaloc50, betaloc90, betaloc975, betazero025, betazero10, betazero50, betazero90, betazero975, sigma_size025,sigma_size10, sigma_size50, sigma_size90,sigma_size975 ) #remove 11 cases
+
+AllParamsIn$cirange <- abs(AllParamsIn$betaloc90 - AllParamsIn$betaloc10)
+plot(AllParamsIn$cirange)
+AllParamsIn <- AllParamsIn %>% filter(cirange < 0.045) %>%select(species, locs, betaloc10, betaloc50, betaloc90, betazero10, betazero50, betazero90, sigma_size10, sigma_size50, sigma_size90) #remove 10 cases
+
+AllParamsOut$cirange <- abs(AllParamsOut$betaloc90 - AllParamsOut$betaloc10)
+plot(AllParamsOut$cirange)
+AllParamsOut <- AllParamsOut %>% filter(cirange < 0.045) %>%select(species, locs, betaloc10, betaloc50, betaloc90, betazero10, betazero50, betazero90, sigma_size10, sigma_size50, sigma_size90) #remove 13 cases
+
+#Now combine the data 
+Params2models <- full_join(AllParamsIn, AllParamsOut, by = c("species", "locs"))
+Params3models <- full_join(Params2models, AllParamsPool, by = c("species", "locs"))
+
+colnames(Params3models) <- c("species", "locs", "inMPA10", "inMPA50", "inMPA90", "zero_inMPA10", "zero_inMPA50", "zero_inMPA90", "inss10", "inss50", "inss90", "outMPA10", "outMPA50", "outMPA90", "zero_outMPA10", "zero_outMPA50", "zero_outMPA90", "outss10", "outss50", "outss90", "pooled10", "pooled50", "pooled90", "zero_pooledMPA10", "zero_pooledMPA50", "zero_pooledMPA90", "poss10", "poss50", "poss90")
+
+
+#Now load the spatial slopes 
+load(file = "RdataOutputs/FinalSpaceBet1ci.RData")
+sppSpaceSlope <- bet1ci
+
+Params3models$sppSpaceBeta50 <- sppSpaceSlope$p50[match(Params3models$species, sppSpaceSlope$species)]
+Params3models$sppSpaceBeta10 <- sppSpaceSlope$p10[match(Params3models$species, sppSpaceSlope$species)]
+Params3models$sppSpaceBeta90 <- sppSpaceSlope$p90[match(Params3models$species, sppSpaceSlope$species)]
+
+Params3models$ident <- paste(Params3models$species, Params3models$locs, sep= "_")
+
+save(Params3models, file = "RdataOutputs/Combined3tempSpace.RData")
+
+```
+
+### Only get pooled temp and space data
+
+``` {r}
+rm(list = ls())
+load(file = "RdataOutputs/TempPool_105spp.RData") 
+notwarming = c("Jurien")
+
+AllParamsPool <-AllParams %>% filter ((!locs %in% notwarming))
+#exclude species with very large CI
+#AllParamsPool$cirange <- abs(AllParamsPool$betaloc90 - AllParamsPool$betaloc10)
+#plot(AllParamsPool$cirange)
+
+AllParamsPool <- AllParamsPool %>% select(species, locs, betaloc025, betaloc10, betaloc50, betaloc90, betaloc975, betazero025, betazero10, betazero50, betazero90, betazero975, sigma_size025,sigma_size10, sigma_size50, sigma_size90,sigma_size975 ) #remove 11 cases
+
+column <- paste("Time_", colnames(AllParamsPool[3:17]),sep = "")
+column <- c("species", "locs", column)
+
+colnames(AllParamsPool) <- column
+
+#Now load cleaned space trends
+load(file = "RdataOutputs/FinalSpaceBet1ci_335spp.RData")
+
+TempSpaceCombined <- left_join(AllParamsPool, bet1ci, by = "species")
+
+save(TempSpaceCombined, file = "RdataOutputs/TempSpaceCombined.RData")
+write.csv(TempSpaceCombined, file = "TempSpaceSlopes.csv")
+```
+
+### Fig2 plot
+
+```{r}
+load(file = "RdataOutputs/TempSpaceCombined.RData")
+
+## select only the 10, 50 and 90% of space and time slopes 
+
+df <- TempSpaceCombined %>% select (species, locs, Time_betaloc025, Time_betaloc10, Time_betaloc50, Time_betaloc90, Time_betaloc975, p025, p10, p50, p90, p975)
+
+colnames(df) <- c("species", "locs", "x_025", "x_10", "x_50", "x_90", "x_975", "y_025", "y_10", "y_50", "y_90", "y_975")
+
+#Get SDs - to use in typeII regression
+df_fit <- df %>%
+  mutate(
+    x = x_50,
+    #SD_x = (x_90-x_10)/(2*1.281552),
+    SD_x = (x_975-x_025)/(2*1.96),
+    y = y_50,
+    #SD_y = (y_90-y_10)/(2*1.281552)
+    SD_y = (y_975-y_025)/(2*1.96)
+  ) %>%
+  select(Species = species, x, SD_x, y, SD_y, x_10, x_90, y_10, y_90)
+
+df_fit <- na.omit(df_fit)
+#not sure what these are for
+#df_fit$sd <- sqrt(df_fit$SD_x^2 + df_fit$SD_y^2)
+#df_fit$alpha <- 1.0 - 0.8*(df_fit$sd - min(df_fit$sd))/ (max(df_fit$sd) - min(df_fit$sd))
+
+
+# standard correlation (no weighting)
+cor(df_fit$x, df_fit$y) 
+
+# calculate the weights for each point
+wts <- 1/(df_fit$SD_x*df_fit$SD_y) 
+wts <- wts/max(wts) # renormalise weights
+
+# non-bootstrap approach
+res_wc <- wtd.cor(df_fit$x, df_fit$y, weight = wts, bootse=FALSE)
+res_wc
+
+# standard number of bootstraps
+res_wc <- wtd.cor(df_fit$x, df_fit$y, weight = wts, bootse=TRUE)
+res_wc
+
+# lots of bootstraps
+res_wc <- wtd.cor(df_fit$x, df_fit$y, weight = wts, bootse=TRUE, bootn = 10000)
+res_wc
+
+###
+
+# fit the type II regression (without weights)
+fit_lm2 <- lmodel2(y ~ x, data = df_fit)
+beta0 <- fit_lm2$regression.results[2,2] # y-intercept
+beta1 <- fit_lm2$regression.results[2,3] # slope
+
+#beta0_025 <- fit_lm2$confidence.intervals[2,2] # y-intercept
+#beta1_025 <- fit_lm2$confidence.intervals[2,4] # slope
+#beta0_975 <- fit_lm2$confidence.intervals[2,3] # y-intercept
+#beta1_975 <- fit_lm2$confidence.intervals[2,5] # slope
+
+#if we had 1:1 match, and we get 0.025C change per year or 1C per 40years we expect the slope of 40. But we say that slope in time is 10 times faster than in space (1C spatial change occurs over 4 years) so we expect a slope of 4 
+
+# plot 
+ggplot(df_fit, aes(x = x, y = y)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey20") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey20") +
+  geom_errorbar(aes(ymin = y_10, ymax = y_90), color = "darkgrey") +
+  geom_errorbarh(aes(xmin = x_10, xmax = x_90), color = "darkgrey") +
+    geom_point(color = "black") +
+  geom_abline(yintercept = 0, slope = 4, color = "orange", size = 0.6) +
+   geom_abline(yintercept = beta0, slope = beta1, color = "red", size = 1) +
+  # xlim(-0.05,0.03) + ylim(-0.15,0.25) +
+  theme_bw() +
+  geom_text(x=-0.05, y=0.25, label="rho = 0.28, p = 0.005", size = 8, fontface = 3) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  #geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
+  # ggtitle("Comparing trends of body size in space and time") + 
+  labs(
+    y    = "Relative change in body lenght per 1C difference across space",
+    x    = "Relative annual change in body length in one location"
+  )
+
+
+
+ggplot(TempSpaceCombined, aes(x = Time_betaloc50, y = p50)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0, linetype = 2, color = "grey65") + 
+  geom_vline(xintercept = 0, linetype = 2, color = "grey65") + 
+  #xlim(-0.05,0.05) +
+  #ylim(-0.1, 0.2) +
+  geom_errorbar(aes(ymin = p10, ymax = p90), color = "#9ecae1") +
+  geom_errorbarh(aes(xmin = Time_betaloc10, xmax = Time_betaloc90), color = "#9ecae1") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+#  geom_text(aes(label=species), nudge_y = 0.001, size = 3) + 
+  theme_bw() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  #geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
+  ggtitle("Comparing trends in body size in space and time") + 
+  labs(
+    y    = "Change in body lenght per 1C difference across space (0.01 means 1% change)",
+    x    = "Change in body length per year (0.01 means 1% change per year)"
+  )
+
+
+ggplot(df_fit, aes(x = x, y = y)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey65") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey65") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+  geom_errorbar(aes(ymin = y - SD_y, ymax = y + SD_y), color = "#9ecae1") +
+  geom_errorbarh(aes(xmin = x - SD_x, xmax = x + SD_x), color = "#9ecae1") +
+  geom_point(color = "#3182bd", size = 1) +
+  labs(
+    x = expression("Relative change in body size (per"~degree~"C) [Time]"),
+    y = expression("Relative change in body size (per"~degree~"C) [Space]")
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank()
+
+
+
+```
+
+
+```{r}
+load(file= "meanSizes.RData") #mean annual body size for 24 species at Maria
+load(file = "estimatedTrends.RData") #estimated temporal trends, beta0 is the intercept and betaloc is the slope, sigma shows all three error terms
+
+for (aa in 1:length(unique(maria_means$TAXONOMIC_NAME))) {
+
+SpeciesName <- mariaSpp[aa]
+ print(SpeciesName)
+ print(aa)
+ 
+ #data for one species
+ df_fit <- maria_means %>% filter(TAXONOMIC_NAME == SpeciesName)
+ df_trend <- mariaTrend %>% filter(species == as.character(SpeciesName))
+
+    ggplot(df_fit, aes(x = year, y = meanLogSize)) +
+    geom_point(color = "grey80", size = 1.5) + # observed data
+    geom_point(data = df_fit, aes(x = year, y = meanLogSize, size = ln10ofn), color = "dark red") +
+    #geom_abline(intercept = 3.5, slope = -0.0048, size = 0.6) + 
+    #geom_abline(intercept = as.numeric(df_trend$betazero50), slope = as.numeric(df_trend$betaloc50), color = "orange", size = 0.6) +
+    ylim(0.5, 4.5) +
+    facet_grid(~TAXONOMIC_NAME, scales = "free_y") + 
+    labs(size = "Counts\n(log10)", x = "Year", y = "log Size (cm)") +
+    theme_bw()+
+    theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size = 6))
+ 
+}
+ 
+    ggplot(maria_means, aes(x = year, y = meanLogSize)) +
+    geom_point(color = "grey80", size = 1.5) + # observed data
+    geom_point(data = maria_means, aes(x = year, y = meanLogSize, size = ln10ofn), color = "dark red") +
+    #geom_abline(intercept = 3.5, slope = -0.04, size = 0.6) + 
+    geom_abline(intercept = betazero50, slope = betaloc50, color = "orange", size = 0.6) +
+    ylim(0.5, 4.5) +
+    facet_grid(~TAXONOMIC_NAME, scales = "free_y") + 
+    labs(size = "Counts\n(log10)", x = "Year", y = "log Size (cm)") +
+    theme_bw()+
+    theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size = 6))
+
+
+    
+    ggplot(df_summary, aes(x = Size, y = n, group = TAXONOMIC_NAME)) +
+  geom_point() + geom_line() +
+  facet_wrap( ~ TAXONOMIC_NAME, scale = "free_y") +
+  labs(x = "Size (cm)", y = "Abundance") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size = 6))
+
+```
+
+### Changes at Maria
+
+```{r, eval = F}
+load(file = "RdataOutputs/TempPool_105spp.RData") 
+
+mariaTrend <- AllParams %>% filter (locs == "Maria ") # these are estimated trends for the 24 species
+save(mariaTrend, file = "estimatedTrends.RData")
+
+#now load the actual data
+load(file = "inputs/DataFor9locsPooled.RData") #all temporal data with rare species filtered out 
+#get only maria data 
+mariaData <- df_ok %>% filter (Locs == "Maria ")
+mariaData$y <- log(mariaData$SizeClass)
+mariaSpp <- unique(mariaData$TAXONOMIC_NAME) #24 species 
+
+maria_means <- mariaData %>% group_by (year, TAXONOMIC_NAME) %>% summarise (meanLogSize = mean(y), n = n(), ln10ofn = log10(n)) %>% arrange (TAXONOMIC_NAME, year)
+save(maria_means, file= "meanSizes.RData")
+
+for (aa in 1:length(mariaSpp)) {
+
+ SpeciesName <- mariaSpp[aa]
+ print(SpeciesName)
+ print(aa)
+ 
+ #prepare data 
+ df_fit <- mariaData %>% filter(TAXONOMIC_NAME == SpeciesName)
+ df_trend <- mariaTrend %>% filter(species == as.character(SpeciesName))
+  
+  ## plot sizes
+  df_means <- df_fit %>%
+    group_by(year) %>%
+    summarise(mu = mean(y), n = n(), ln10 = log10(n)) %>%
+    arrange(year)
+ 
+ # sizeplot <- 
+    
+    ggplot(df_means, aes(x = year, y = mu)) +
+    geom_point(color = "grey80", size = 1.5) + # observed data
+    geom_point(data = df_means, aes(x = year, y = mu, size = ln10), color = "dark red") +
+    geom_abline(intercept = 3.5, slope = -0.04, size = 0.6)   
+      
+      
+    geom_abline(intercept = df_trend$betazero50, slope = df_trend$betaloc50, color = "orange") +
+    ylim(0.5, 4.5) +
+    labs(
+      title = SpeciesName,
+      size = "Counts\n(log10)", x = "Year", y = "log Size (cm)") +
+    theme_bw()
+
+ggsave (filename = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/MainResults/sizeTemporalPlots/",SpeciesName,"NNoMPA.jpg",sep=""), plot = sizeplot, width = 8, height = 7)    
+
+}
+
+
+# plot 
+ggplot(df_fit, aes(x = x, y = y)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey20") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey20") +
+  geom_errorbar(aes(ymin = y_10, ymax = y_90), color = "darkgrey") +
+  geom_errorbarh(aes(xmin = x_10, xmax = x_90), color = "darkgrey") +
+    geom_point(color = "black") +
+  geom_abline(yintercept = 0, slope = 4, color = "orange", size = 0.6) +
+   geom_abline(yintercept = beta0, slope = beta1, color = "red", size = 1) +
+  # xlim(-0.05,0.03) + ylim(-0.15,0.25) +
+  theme_bw() +
+  geom_text(x=-0.05, y=0.25, label="rho = 0.28, p = 0.005", size = 8, fontface = 3) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  #geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
+  # ggtitle("Comparing trends of body size in space and time") + 
+  labs(
+    y    = "Relative change in body lenght per 1C difference across space",
+    x    = "Relative annual change in body length in one location"
+  )
+
+
+
+
+## what was the predicted mean size in year 1992 (years are scaled as year - 2018)
+# ln(mean size) = beta0 + beta1*SST + error terms. Thus, for beta1 = -0.02, exp(-0.02) = 0.980, means a 2% reduction in mean size with a degree change in SST.
+## The stan code is 
+#mu = beta_0[i_loc[i]] + beta_yr[i_loc[i]]*x[i] + yr_RE[i_yr[i]] + srv_RE[i], where mu is mean log fish size
+
+maria$size1992 <- exp(maria$betazero50 + maria$betaloc50 * (1992-2018))
+maria$size2018 <- exp(maria$betazero50 + maria$betaloc50 * (2018-2018))
+
+maria$size1992_10 <- exp(maria$betazero10 + maria$betaloc10 * (1992-2018))
+maria$size2018_90 <- exp(maria$betazero10 + maria$betaloc10 * (2018-2018)) # the CI values are switched so we always get 10 as a smaller range and 90 at the larger range
+
+maria$size1992_90 <- exp(maria$betazero90 + maria$betaloc90 * (1992-2018))
+maria$size2018_10 <- exp(maria$betazero90 + maria$betaloc90 * (2018-2018))
+
+#read in length-weight relationships for species
+LW <- read.csv(file = "inputs/LW.csv")
+
+maria$LWa <- LW$Lwa[match(maria$species, LW$TAXONOMIC_NAME)]
+maria$LWb <- LW$Lwb[match(maria$species, LW$TAXONOMIC_NAME)]
+
+maria$wgt1992 <- maria$LWa*maria$size1992^maria$LWb
+maria$wgt2018 <- maria$LWa*maria$size2018^maria$LWb
+
+maria$wgt1992_10 <- maria$LWa*maria$size1992_10^maria$LWb
+maria$wgt2018_90 <- maria$LWa*maria$size2018_90^maria$LWb
+
+maria$wgt1992_90 <- maria$LWa*maria$size1992_90^maria$LWb
+maria$wgt2018_10 <- maria$LWa*maria$size2018_10^maria$LWb
+
+t1992 <- maria %>% select (species, size1992_10, size1992, size1992_90, wgt1992_10, wgt1992, wgt1992_90) %>% mutate(year = rep(1992))
+colnames(t1992) <- c("species", "Lenp10", "Lenp50", "Lenp90", "Wgtp10", "Wgtp50", "Wgtp90", "year")
+t2018 <- maria %>% select (species, size2018_10, size2018, size2018_90, wgt2018_10, wgt2018, wgt2018_90) %>% mutate(year = rep(2018))
+colnames(t2018) <- c("species", "Lenp10", "Lenp50", "Lenp90", "Wgtp10", "Wgtp50", "Wgtp90", "year")
+plotdata <- rbind(t1992,t2018)
+
+maria_sizes <- plotdata
+
+save(maria_sizes, file = "RDataoutputs/maria_sizes.RData")
+
+```
+
+
+```{r}
+##
+require(png)
+
+#load maria *modelled* data:
+
+load("RDataoutputs/maria_sizes.RData")
+
+maria <-maria_sizes 
+
+##
+diffs <- maria[maria$year=="2018", 1:4]
+diffs$Lenp10 <- ((maria[maria$year=="2018","Lenp10"] - maria[maria$year=="1992","Lenp10"]) / maria[maria$year=="1992","Lenp10"])*100
+diffs$Lenp50 <- ((maria[maria$year=="2018","Lenp50"] - maria[maria$year=="1992","Lenp50"])/ maria[maria$year=="1992","Lenp50"])*100
+diffs$Lenp90 <- ((maria[maria$year=="2018","Lenp90"] - maria[maria$year=="1992","Lenp90"])/ maria[maria$year=="1992","Lenp90"])*100
+
+diffs$labels <- ifelse(diffs$Lenp50<0,"decrease","increase")
+
+# do you wnat add a pic? - Not done yet////
+
+img<-readPNG("astri.png")
+rast<-as.raster(img)
+
+# barplot
+ ggplot() + 
+  geom_bar(data = diffs, aes(x=reorder(species,-Lenp50),y=Lenp50,fill=labels), stat = "identity") +
+  geom_errorbar(aes(x=species, y=Lenp50, ymin=Lenp10, ymax=Lenp90), width=.1, position=position_dodge(), data=diffs) +
+  scale_fill_manual(name="Trend", 
+                    labels = c("Decrease", "Increase"), 
+                    values = c("decrease"="#FF6347", "increase"="#87CEEB")) + 
+  labs(title="",y="Percentage difference in 2018 relative to 1992",x="") + 
+     coord_flip() +
+   theme_bw() +
+ theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+ # annotation_raster(rast, ymin = -100, ymax = -50, xmin = 1, xmax=8) +
+  ggsave("mariaChange.png",width = 5, height = 4, dpi = 300)
+
+
+
+
+
+
+
+
+
+maria$wgtRel <- (maria$wgt2018/maria$wgt1992*100) - 100
+
+
+
+
+#par(mar = c(5,10,5,5))
+#barplot(test$wgtRel, main="Percentage change in weight, 1992 to 2018", horiz=TRUE, names.arg=maria$species, las = 2)
+#abline(v=0, lwd = 2)
+#ggplot(data=test, aes(x=wgtRel,y=species)) +
+#  geom_bar(stat="identity")
+
+#ggplot(test) +
+#    geom_bar( aes(x=species, y=wgtPlot), stat="identity", fill="grey", alpha=0.8) +
+#   theme(axis.text.x=element_text(angle = 90, hjust = 0)) +
+ #  xlim(-0.05,0.03) + ylim(-0.15,0.25) +
+ #   ylim(-150, 150) +
+#    geom_errorbar( aes(x=species, ymin=wgtRel_10, ymax=wgtRel_90), width=0.3, colour="black", alpha=0.9, size=0.6) 
+
+
+
+
+
+```
+
+
+### Compare in/out MPA temporal trends
+
+Generally they are very similar, so we can use pooled data
+
+```{r, warning = F}
+load(file = "RdataOutputs/Combined3tempSpace.RData")
+#write.csv(Params3models, file = "SlopesFromTemporalAnalyses.csv")
+
+## we might want to remove the outlier with a slope of 0.04 outside MPA 
+
+ggplot(Params3models, aes(inMPA50,outMPA50)) + 
+  geom_point() +  
+#  ylim(-0.02, 0.01) +   # add ylim to remove the outlier 
+#  xlim (-0.03, 0.03) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  geom_vline(xintercept = 0, linetype = 2) + 
+# geom_errorbar(aes(ymin = (outMPA50-outMPA10), ymax = (outMPA50-outMPA90))) +
+  geom_text(aes(label=ident), nudge_y = 0.001, size = 2) + 
+  theme_bw() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+ geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
+  ggtitle("Comparing trends in body size inside and outside MPA") + 
+  labs(
+    x    = "Change in mean body length inside MPA (0.01 means 1% change per year)",
+    y    = "Change in mean body length outside MPA"
+  )
+
+# but correlation is generally zero 
+cor.test(Params3models$inMPA50, Params3models$outMPA50)
+
+tt <- runif(n=110, min = -0.03, max = 0.03)
+ta <- tt + 0.001
+
+plot(Params3models$outMPA50, Params3models$inMPA50, pch = 19, xlab = "Slopes outside MPA (0.01 means 1% change per year)", ylab= "Slopes inside MPA", main = "Comparing slopes inside and outside MPA", ylim = c(-0.03, 0.04), xlim = c(-0.03, 0.04))
+abline(lm(tt ~ ta))
+abline (h=0, lty = 2)
+abline (v=0, lty = 2)
+
+## if we look at a plot and correlation for pooled versus outside MPA data we can see that pooled data is mostly driven by outside MPA results, because there is a lot more data there
+plot(Params3models$outMPA50, Params3models$pooled50, pch = 19, xlab = "Slopes outside MPA", ylab= "Slopes for the pooled data", main = "Comparing slopes outside MPA to the pooled data")
+abline 
+cor.test(Params3models$outMPA50, Params3models$pooled50)
+##
+
+## Get the pooled data
+load(file = "RdataOutputs/TempPool_105spp.RData") 
+write.csv (AllParams, file = "MainResults/TemporalSlopesPooled.csv" )
+
+#exclude species with very large CI
+AllParams$cirange <- abs(AllParams$betaloc90 - AllParams$betaloc10)
+plot(AllParams$cirange)
+AllParams <- AllParams %>% filter(cirange < 0.045) # 10 cases 
+
+TempStatistics <- AllParams %>% group_by(locs) %>% summarise(spp = n_distinct(species), meantrend = mean(betaloc50), mediantrend = median(betaloc50), sdtrend = sd(betaloc50))
+
+length(which(AllParams$betaloc10 > 0)) #30 #out of 181
+length(which(AllParams$betaloc90 < 0)) #42
+
+AllParams.nJ <- AllParams %>% filter (!locs == "Jurien") #148
+length(which(AllParams.nJ$betaloc10 > 0)) #23
+length(which(AllParams.nJ$betaloc90 < 0)) #40
+
+
+## 
+Jervis <- AllParams %>% filter (locs == "Jervis")
+length(which(Jervis$betaloc10 > 0)) #10
+length(which(Jervis$betaloc90 < 0)) #6
+length(unique(Jervis$species)) #50
+
+Maria <- AllParams %>% filter (locs == "Maria ")
+length(which(Maria$betaloc10 > 0)) #4
+length(which(Maria$betaloc90 < 0)) #11
+length(unique(Maria$species)) #24
+
+Jurien <- Params3models %>% filter (locs == "Jurien")
+length(which(Jurien$pooled10 > 0)) #7
+length(which(Jurien$pooled90 < 0)) #2
+length(unique(Jurien$species)) #33
+
+PortP <- Params3models %>% filter (locs == "Port P")
+length(which(PortP$pooled10 > 0)) #0
+length(which(PortP$pooled90 < 0)) #7
+length(unique(PortP$species)) #18
+
+
+notwarming = c("Jurien")
+Params3models.t <- Params3models %>% filter (!locs %in% notwarming)
+
+cor.test(Params3models.t$sppSpaceBeta50, Params3models.t$pooled50)
+
+ggplot(Params3models.t, aes(pooled50,sppSpaceBeta50)) + 
+  geom_point() +  
+#  ylim(-0.02, 0.01) +   # add ylim to remove the outlier 
+#  xlim (-0.03, 0.03) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  geom_vline(xintercept = 0, linetype = 2) + 
+# geom_errorbar(aes(ymin = (outMPA50-outMPA10), ymax = (outMPA50-outMPA90))) +
+  geom_text(aes(label=ident), nudge_y = 0.001, size = 2) + 
+  theme_bw() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+ # geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
+  ggtitle("Comparing trends in body size inside and outside MPA") + 
+  labs(
+    x    = "Change in mean body length inside MPA (0.01 means 1% change per year)",
+    y    = "Change in mean body length outside MPA"
+  )
+
+```
+
+### Compare spatial and temporal slopes
+Only use pooled temporal data
+
+
+```{r}
+load(file = "RdataOutputs/TempPool_105spp.RData") 
+notwarming = c("Jurien")
+
+#mean species slopes
+MeanSppSizeSlopes <- Params3models %>% filter (!locs %in% notwarming) %>% group_by(species) %>% summarise(tempslope50pool = mean(pooled50, na.rm = T), tempslope10pool = mean(pooled10, na.rm =T), tempslope90pool = mean(pooled90, na.rm = T), spaceSlope50 = first(sppSpaceBeta50), spaceSlope10 = first(sppSpaceBeta10), spaceSlope90 = first(sppSpaceBeta90))
+
+Params3models.NJ <- Params3models %>% filter (!locs %in% notwarming)
+
+#median species slopes
+#MedianSppSizeSlopes <- Params3models %>% filter (!locs %in% notwarming) %>% group_by(species) %>% summarise(tempslope50pool = median(pooled50, na.rm = T), tempslope10pool = median(pooled10, na.rm =T), tempslope90pool = median(pooled90, na.rm = T), spaceSlope50 = first(sppSpaceBeta50), spaceSlope10 = first(sppSpaceBeta10), spaceSlope90 = first(sppSpaceBeta90))
+
+## find a good way to visualise this 
+
+ggplot(Params3models.NJ, aes(pooled50,sppSpaceBeta50)) + 
+#ggplot(MeanSppSizeSlopes, aes(tempslope50pool,spaceSlope50)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0, linetype = 2) + 
+  geom_vline(xintercept = 0, linetype = 2) + 
+  xlim(-0.03,0.03) +
+  ylim(-0.1, 0.12) +
+#  geom_errorbar(aes(ymin = (spaceSlope10), ymax = (spaceSlope90))) +
+#  geom_errorbarh(aes(xmin = (tempslope10in), xmax = (tempslope90in))) +
+#  geom_text(aes(label=species), nudge_y = 0.001, size = 3) + 
+  theme_bw() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  #geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
+  ggtitle("Comparing trends in body size in space and time") + 
+  labs(
+    y    = "Change in body lenght per 1C difference across space (0.01 means 1% change)",
+    x    = "Change in body length per year (0.01 means 1% change per year)"
+  )
+
+cor.test(Params3models.NJ$pooled50, Params3models.NJ$sppSpaceBeta50)
+
+predictShrink <- lm(pooled50 ~ sppSpaceBeta50, data = Params3models.NJ)
+
+MeanSppSizeSlopes$species[which(MeanSppSizeSlopes$tempslope50pool > 0 & MeanSppSizeSlopes$spaceSlope50 > 0)]
+MeanSppSizeSlopes$species[which(MeanSppSizeSlopes$tempslope50pool < 0 & MeanSppSizeSlopes$spaceSlope50 < 0)]
+MeanSppSizeSlopes$species[which(MeanSppSizeSlopes$tempslope50pool > 0 & MeanSppSizeSlopes$spaceSlope50 < 0)]
+MeanSppSizeSlopes$species[which(MeanSppSizeSlopes$tempslope50pool < 0 & MeanSppSizeSlopes$spaceSlope50 > 0)]
+
+## we can look at whether there is correlation between space and time slopes. If yes, we could predict species temporal response from looking at its size distribution. Generally the correlation is strong and positive, even after removing an outlier 
+
+cor.test(MeanSppSizeSlopes$tempslope50pool, MeanSppSizeSlopes$spaceSlope50)
+
+#remove outlier of strong response - Prionurus microlepidotus
+temp <- MeanSppSizeSlopes %>% filter (spaceSlope50 < 0.15)
+cor.test(temp$tempslope50pool, temp$spaceSlope50)
+
+```
+
+
+### Mixed effect analyses
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+library(lme4)
+
+load(file = "inputs/fish_temp_Mar.RData")
+
+#get mean size, temp and size quantiles for each cell
+DataForIndReg <- fish_temp %>% group_by (TAXONOMIC_NAME, geogroup, year) %>% summarise (meansize = mean(sizeZ), mediansize = quantile(sizeZ, probs = 0.50), q75size = quantile(sizeZ, probs = 0.75), q25size = quantile(sizeZ, probs = 0.25), Topt = first(midpoint),  meantemp = first(meansst), temp1y = first(SST_1yago), temp2y = first(SST_2yago), temp3y = first(SST_3yago), temp5y = first(SST_5yago), gdd = first(scaledGDD), gdd1y = first(scGDD_1yago), gdd2y = first(scGDD_2yago), gdd3y = first(scGDD_3yago), gdd5y = first(scGDD_5yago), cumgdd2 = first(cumGDD_2y), cumgdd3 = first(cumGDD_3y), cumgdd5 = first(cumGDD_5y)) 
+
+#remove cases where Topt is NA (one species)
+DataForIndReg <- DataForIndReg %>% filter (Topt > 0)
+
+# is a species above or below the midpoint (or Topt)
+DataForIndReg$range <- NA
+DataForIndReg$range[which((DataForIndReg$meantemp - DataForIndReg$Topt) >=0) ] <- "AB"
+DataForIndReg$range[which((DataForIndReg$meantemp - DataForIndReg$Topt) < 0) ] <- "BE"
+DataForIndReg$range <- as.factor(DataForIndReg$range)
+
+#Mixed effect analyses - is temperature important and how? 
+
+#First analyse data above and below midpoint only
+test1 <- DataForIndReg %>% filter(range == "BE")
+test1 <- DataForIndReg %>% filter(range == "AB")
+
+m0 <- lmer(meansize ~ 1 + (1|TAXONOMIC_NAME) + (1|year), data = test1, REML = F)
+m1 <- lmer(meansize ~ 1 + meantemp + (1|TAXONOMIC_NAME) + (1|year), data = test1, REML = F)
+anova(m0,m1) 
+summary(m1) ## Very important
+
+### Now look at the total data 
+m0 <- lmer(meansize ~ 1 + (1|TAXONOMIC_NAME) + (1|year), data = DataForIndReg, REML = F)
+m1 <- lmer(meansize ~ 1 + meantemp + (1|TAXONOMIC_NAME) + (1|year), data = DataForIndReg, REML = F)
+anova(m0,m1) 
+summary(m1) ## Very important
+
+m2 <- lmer(meansize ~ 1 + meantemp + range + (1|TAXONOMIC_NAME) + (1|year), data = DataForIndReg, REML = F)
+anova(m1,m2)
+summary(m2)
+
+m3 <- lmer(meansize ~ 1 + meantemp*range + (1|TAXONOMIC_NAME) + (1|year), data = DataForIndReg, REML = F)
+anova(m2,m3)
+summary(m3)
+
+### Or put all variables and see what happens: Something for future exploration
+
+mFull <- lmer(meansize ~ 1 + meantemp + temp1y + temp2y + temp3y + temp5y + gdd + gdd1y + gdd2y + gdd3y + gdd5y + cumgdd2 + cumgdd3 + cumgdd5 + (1|TAXONOMIC_NAME) + (1|year), data = DataForIndReg, REML = F)
+
+drop1(mFull, test = "Chisq")
+
+mFull1 <- lmer(meansize ~ 1 + meantemp + temp1y + temp2y + temp3y + gdd + cumgdd2 + cumgdd3 + cumgdd5 + (1|TAXONOMIC_NAME) + (1|year), data = DataForIndReg, REML = F)
+drop1(mFull1, test = "Chisq")
+
+mFull2 <- lmer(meansize ~ 1 + meantemp + temp2y + gdd + cumgdd2 + cumgdd3 + cumgdd5 + (1|TAXONOMIC_NAME) + (1|year), data = DataForIndReg, REML = F)
+drop1(mFull2, test = "Chisq") #Can't drop anything anymore
+
+summary(mFull2)
+
+
+```
+
+### Individual regression 
+This very simple analysis actually gives very similar result to the Bayesian slopes
+
+```{r, eval = F, echo = F}
+library(lme4)
+
+load(file = "inputs/fish_temp_Mar.RData")
+
+#get mean size, temp and size quantiles for each cell
+DataForIndReg <- fish_temp %>% group_by (TAXONOMIC_NAME, geogroup, year) %>% summarise (meansize = mean(SizeClass), mediansize = quantile(SizeClass, probs = 0.50), q75size = quantile(SizeClass, probs = 0.75), q25size = quantile(SizeClass, probs = 0.25), midpoint = first(midpoint), meantemp = first(meansst), temp1y = first(SST_1yago), temp2y = first(SST_2yago), temp3y = first(SST_3yago), temp5y = first(SST_5yago), gdd = first(scaledGDD), gdd1y = first(scGDD_1yago), gdd2y = first(scGDD_2yago), gdd3y = first(scGDD_3yago), gdd5y = first(scGDD_5yago), cumgdd2 = first(cumGDD_2y), cumgdd3 = first(cumGDD_3y), cumgdd5 = first(cumGDD_5y))
+
+SppChar <- fish_temp %>% group_by(TAXONOMIC_NAME) %>% summarise(midp  = first(midpoint), lmaxFB = first(MaxLenFB), lmaxObs = first(MaxSizeObs))
+
+Species <- unique(DataForIndReg$TAXONOMIC_NAME)
+
+
+IndRegr = matrix(NA, nrow = length(Species), ncol = 6)
+
+for (i in 1:length(Species)) {
+  
+onesp <- DataForIndReg %>% filter(TAXONOMIC_NAME == Species[i])
+print(i)
+print(Species[i])
+
+mod1 = lm(meansize ~ cumgdd3, data = onesp)
+mod2 = lm(q75size ~ cumgdd3, data = onesp)
+mod3 = lm(q25size ~ cumgdd3, data = onesp)
+#mod2 = lm(sizeZ ~ sstmean*relopt, data = onesp)
+
+IndRegr[i,c(1:2)] <- mod1[[1]]
+IndRegr[i,c(3:4)] <- mod2[[1]]
+IndRegr[i,c(5:6)] <- mod3[[1]]
+#IndRegr[i,3] <- as.character(Species[i])
+}
+
+colnames(IndRegr) = c("intMean", "slopeMean","intq75", "slopeq75","intq25", "slopeq25")
+
+IndRegr <- as.data.frame(IndRegr)
+IndRegr$TAXONOMIC_NAME <- Species
+IndRegr$midpoint <- SppChar$midp[match(SppChar$TAXONOMIC_NAME, IndRegr$TAXONOMIC_NAME)]
+IndRegr$LmaxFB <- SppChar$lmaxFB[match(SppChar$TAXONOMIC_NAME, IndRegr$TAXONOMIC_NAME)]
+IndRegr$MaxSizeOb <- SppChar$lmaxObs[match(SppChar$TAXONOMIC_NAME, IndRegr$TAXONOMIC_NAME)]
+
+
+IndRegr_annSST <- IndRegr #put this into a separate dataframe
+save(IndRegr_annSST, file  = "RDataOutputs/IndRegrForMeanSST.RData")
+
+IndRegr_gdd <- IndRegr #put this into a separate dataframe
+save(IndRegr_gdd, file  = "RDataOutputs/IndRegrForGDD.RData")
+
+IndRegr_temp2yago <- IndRegr #put this into a separate dataframe
+save(IndRegr_temp2yago, file  = "RDataOutputs/IndRegrForTemp2yago.RData")
+```
+
+### Plot indiv regression results
+
+```{r, echo=F}
+##
+load(file  = "RDataOutputs/IndRegrForMeanSST.RData")
+load(file  = "RDataOutputs/IndRegrForGDD.RData")
+load(file  = "RDataOutputs/IndRegrForTemp2yago.RData")
+
+par(mfrow = c(3,1))
+
+plot(IndRegr_annSST$midpoint, IndRegr_annSST$slopeMean, pch = 19, main = "Mean size vs ann SST", ylab = "Regression slope", xlab = "midpoint")
+abline (h=0)
+
+plot(IndRegr_gdd$midpoint, IndRegr_gdd$slopeMean, pch = 19, main = "Mean size vs GDD", ylab = "Regression slope", xlab = "midpoint")
+abline (h=0)
+
+plot(IndRegr_temp2yago$midpoint, IndRegr_temp2yago$slopeMean, pch = 19, main = "Mean size vs SST2 years ago", ylab = "Regression slope", xlab = "midpoint")
+abline (h=0)
+
+par(mfrow = c(1,1))
+plot(IndRegr_annSST$slopeMean, IndRegr_temp2yago$slopeMean, pch = 19)
+cor.test(IndRegr_annSST$slopeMean, IndRegr_temp2yago$slopeMean) ##0.94
+
+plot(IndRegr_annSST$slopeMean, IndRegr_gdd$slopeMean, pch = 19)
+cor.test(IndRegr_annSST$slopeMean, IndRegr_gdd$slopeMean) ## 0.99
+
+```
+
+
+### Test effects of 10% exclusion
+
+```{r}
+library(rstan)
+
+load(file = "inputs/fish_temp_withJuv.RData")
+
+#overwrite dataset name so I can use Shane's code
+df <- fish_temp
+rm(fish_temp)
+
+# set factors
+df$TAXONOMIC_NAME <- factor(df$TAXONOMIC_NAME)
+df$geogroup <- factor(df$geogroup)
+df$Size <- factor(as.character(round(df$SizeClass, 1)), 
+    levels = c("2.5",  "5", "7.5", "10", "12.5", "15", "20", "25", "30", "35", "37.5", "40", "50", "62.5"))
+
+## select small species with sufficient data
+smallSpp <- df %>% group_by(TAXONOMIC_NAME) %>% summarise(maxlen = first(MaxSizeObs), count = n()) %>% filter (maxlen < 20) %>% filter (count > 5000)
+
+#these are species that were small and had negative slopes
+smallTest <- c("Chromis nitida","Pomacentrus milleri","Pomacentrus coelestis","Dascyllus reticulatus","Pomacentrus bankanensis","Cirripectes filamentosus","Pomacentrus lepidogenys","Dotalabrus alleni","Dascyllus aruanus","Pomacentrus vaiuli","Plectroglyphidodon lacrymatus","Pseudochromis fuscus","Chromis ternatensis","Labropsis australis")
+
+#Check which of these small species also satisfy data criteria
+smallToRun <- smallTest[which(smallTest %in% smallSpp$TAXONOMIC_NAME)]
+
+## select big species
+bigSpp <- df %>% group_by(TAXONOMIC_NAME) %>% summarise(maxlen = first(MaxSizeObs), count = n()) %>% filter (maxlen > 45) %>% filter (count > 1500)
+#these were big speices that mostly had positive slopes
+bigTest <- c("Kyphosus sydneyanus","Arripis trutta","Dinolestes lewini","Choerodon rubescens","Cheilodactylus spectabilis","Achoerodus viridis","Caranx melampygus","Dactylophora nigricans","Coris aygula","Plectropomus leopardus","Heterodontus portusjacksoni","Achoerodus gouldii")
+
+#These will be run for the tests (10 spp)
+bigToRun <- bigTest[which(bigTest %in% bigSpp$TAXONOMIC_NAME)] #this gives 9 species, so I will add "Caranx melampygus" which is also big and had a positive slope
+
+##Now the actual bayesian runs ##
+
+### Runs for big species (need to used higher b0 priors)
+
+for (x in 1:length(bigToRun)) {
+
+SpeciesName <- bigToRun[x]
+print(SpeciesName)
+
+### prepare data 
+
+df$y <- log(df$SizeClass)
+df_fit <- df %>% filter(TAXONOMIC_NAME == SpeciesName)
+
+df_fit$X1 <- (df_fit$meansst - mean(df_fit$meansst)) / sd(df_fit$meansst)
+df_fit$X2 <- df_fit$X1^2
+
+yVals <- sort(unique(df$SizeClass)) # fish size classes
+I     <- length(yVals)              # number of fish size classes
+yCuts <- rep(0, I-1)                # fish sizes that split size classes
+for (i in 2:I) {
+  yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+}
+
+###
+df_stan <- df %>% 
+  filter(TAXONOMIC_NAME == SpeciesName) %>%
+  mutate(z1 = meansst - mean(meansst)) %>% # rescale size for fitting
+  dplyr::select(year, month, day, geogroup, z1, SizeClass) %>%
+  mutate(
+    survey_date = as.Date(paste(year, month, day, sep = "-")),
+    survey = paste(survey_date, geogroup, sep = "-")
+  ) %>%
+  arrange(survey) %>%
+  mutate(indx_srv = as.integer(factor(survey)))
+
+# add random factor indexes for year, location, and sample
+years    <- sort(unique(df_stan$year))
+df_years <- tibble(year = years, indx_year = 1:length(years))
+grps    <- sort(unique(df_stan$geogroup))
+df_grps <- tibble(geogroup = grps, indx_grp = 1:length(grps))
+df_yVals <- tibble(SizeClass = yVals, indx_sc = 1:length(yVals))
+
+df_stan <- left_join(df_stan, df_years, by = "year")
+df_stan <- left_join(df_stan, df_grps,  by = "geogroup")
+df_stan <- left_join(df_stan, df_yVals, by = "SizeClass")
+
+df_n <- df_stan %>%
+  group_by(indx_srv, indx_sc) %>%
+  summarise(n = n())
+
+max_sc <- length(yVals) # max(df_n$indx_sc)
+max_srv <- max(df_n$indx_srv)
+
+m_obs <- matrix(data = 0, nrow = max_srv, ncol = max_sc)
+for (i in 1:nrow(df_n)) {
+  m_obs[df_n$indx_srv[i],df_n$indx_sc[i]] <- df_n$n[i] 
+}
+
+df_srv <- df_stan %>%
+  group_by(indx_srv) %>%
+  summarise(
+    z1   = median(z1),
+    year = median(indx_year),
+    grp  = median(indx_grp)
+  )
+
+stan_dat <- list(
+  N = nrow(df_srv),               # surveys
+  J = max(df_srv$grp),            # locations
+  K = length(yCuts) + 1,          # fish size classes
+  L = max(df_srv$year),           # years of data 
+  cutoff = yCuts,                 # size class cut-offs
+  y    = m_obs,                   # observations per size class
+  x    = df_srv$z1,               # predictor variable
+  gloc = df_srv$grp,              # locations
+  yr   = df_srv$year              # year
+)
+
+fit <- stan(file = 'model6_2largerb0.stan', data = stan_dat, iter = 1000, warmup = 500, chains = 3, seed = 66, refresh = 250)
+
+save(fit, file = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/output/testExclusion/",SpeciesName,".RData",sep=""))
+
+}
+
+### Runs for small species (lower b0 priors)
+
+for (x in 1:length(smallToRun)) {
+
+SpeciesName <- smallToRun[x]
+print(SpeciesName)
+
+### prepare data 
+
+df$y <- log(df$SizeClass)
+df_fit <- df %>% filter(TAXONOMIC_NAME == SpeciesName)
+
+df_fit$X1 <- (df_fit$meansst - mean(df_fit$meansst)) / sd(df_fit$meansst)
+df_fit$X2 <- df_fit$X1^2
+
+yVals <- sort(unique(df$SizeClass)) # fish size classes
+I     <- length(yVals)              # number of fish size classes
+yCuts <- rep(0, I-1)                # fish sizes that split size classes
+for (i in 2:I) {
+  yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+}
+
+###
+df_stan <- df %>% 
+  filter(TAXONOMIC_NAME == SpeciesName) %>%
+  mutate(z1 = meansst - mean(meansst)) %>% # rescale size for fitting
+  dplyr::select(year, month, day, geogroup, z1, SizeClass) %>%
+  mutate(
+    survey_date = as.Date(paste(year, month, day, sep = "-")),
+    survey = paste(survey_date, geogroup, sep = "-")
+  ) %>%
+  arrange(survey) %>%
+  mutate(indx_srv = as.integer(factor(survey)))
+
+# add random factor indexes for year, location, and sample
+years    <- sort(unique(df_stan$year))
+df_years <- tibble(year = years, indx_year = 1:length(years))
+grps    <- sort(unique(df_stan$geogroup))
+df_grps <- tibble(geogroup = grps, indx_grp = 1:length(grps))
+df_yVals <- tibble(SizeClass = yVals, indx_sc = 1:length(yVals))
+
+df_stan <- left_join(df_stan, df_years, by = "year")
+df_stan <- left_join(df_stan, df_grps,  by = "geogroup")
+df_stan <- left_join(df_stan, df_yVals, by = "SizeClass")
+
+df_n <- df_stan %>%
+  group_by(indx_srv, indx_sc) %>%
+  summarise(n = n())
+
+max_sc <- length(yVals) # max(df_n$indx_sc)
+max_srv <- max(df_n$indx_srv)
+
+m_obs <- matrix(data = 0, nrow = max_srv, ncol = max_sc)
+for (i in 1:nrow(df_n)) {
+  m_obs[df_n$indx_srv[i],df_n$indx_sc[i]] <- df_n$n[i] 
+}
+
+df_srv <- df_stan %>%
+  group_by(indx_srv) %>%
+  summarise(
+    z1   = median(z1),
+    year = median(indx_year),
+    grp  = median(indx_grp)
+  )
+
+stan_dat <- list(
+  N = nrow(df_srv),               # surveys
+  J = max(df_srv$grp),            # locations
+  K = length(yCuts) + 1,          # fish size classes
+  L = max(df_srv$year),           # years of data 
+  cutoff = yCuts,                 # size class cut-offs
+  y    = m_obs,                   # observations per size class
+  x    = df_srv$z1,               # predictor variable
+  gloc = df_srv$grp,              # locations
+  yr   = df_srv$year              # year
+)
+
+fit <- stan(file = 'model6_2lowerb0.stan', data = stan_dat, iter = 1000, warmup = 500, chains = 3, seed = 66, refresh = 250)
+
+save(fit, file = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/output/testExclusion/",SpeciesName,".RData",sep=""))
+
+}
+
+## Now extract results 
+
+myspp = c(bigToRun, smallToRun, "Caranx melampygus")
+model_params <- c("beta0", "beta1", "sigma_size", "sigma_gloc", "sigma_yr", "sigma_srv")
+l_trace <- vector("list", 1) # create an empty list
+l_plots <- vector("list", 1) # create an empty list
+
+pdf(file="Test10percentExcl.pdf",onefile=TRUE) 
+
+for (i in 1:length(myspp)) {
+
+SpeciesName <- myspp[i] #select the species 
+print(SpeciesName)
+print(i)
+
+load(file = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/output/testExclusion/",SpeciesName,".RData",sep=""))
+
+l_trace[[i]] <- traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = 3)
+print(traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = 3))
+
+extracted <- rstan::extract(fit, pars=model_params)
+df_prm_pdf <- reshape2::melt(extracted, value.name="Parameter")
+
+# plot posterior distributions
+df_prm_pdf$L1 <- factor(df_prm_pdf$L1, levels = c("beta0", "beta1", 
+                                                      "sigma_size", "sigma_gloc", "sigma_yr", "sigma_srv"))
+    
+l_plots[[i]] <- ggplot(data=df_prm_pdf, aes(x = Parameter)) + 
+      labs(title = SpeciesName) +
+      geom_density(fill = "wheat") +
+      labs(
+        x    = "Parameter Value",
+        y    = "Probability density"
+      ) +
+      facet_wrap( ~ L1, scale = "free", ncol=3) +
+      theme_bw()
+
+print(ggplot(data=df_prm_pdf, aes(x = Parameter)) + 
+  labs(title = SpeciesName) +
+  geom_density(fill = "wheat") +
+  labs(
+    x    = "Parameter Value",
+    y    = "Probability density"
+  ) +
+  facet_wrap( ~ L1, scale = "free", ncol=3) +
+  theme_bw())
+
+print(i)
+}
+
+dev.off()
+
+##Now  get confidence intervals 
+model_params <- c("beta0", "beta1", "sigma_size", "sigma_gloc", "sigma_yr", "sigma_srv")
+l_CI    <- vector("list", 1) # create an empty list
+
+for (i in 1:length(myspp)) {
+
+SpeciesName <- myspp[i] #select the species 
+print(SpeciesName)
+print(i)
+
+load(file = paste("C:/Users/astaa/Dropbox/asta/RLS/OptimalSize/output/testExclusion/",SpeciesName,".RData",sep=""))
+  
+  extracted <- rstan::extract(fit, pars=model_params)
+  df_prm_pdf <- reshape2::melt(extracted, value.name="Parameter")
+  
+  df_summary <- df_prm_pdf %>% group_by(L1) %>% 
+    summarise(
+      n= n(), # samples
+      p.025 = quantile(Parameter, probs = 0.025),
+      p.100 = quantile(Parameter, probs = 0.100),
+      p.500 = quantile(Parameter, probs = 0.500),
+      p.900 = quantile(Parameter, probs = 0.900),
+      p.975 = quantile(Parameter, probs = 0.975)
+    )
+  
+  l_CI[[i]] <- df_summary
+}
+
+## and put them in a dataframe
+bet1ci = data.frame(NA, nrow = length(myspp), ncol = 19)
+
+for (i in 1:length(myspp)) {
+  
+SpeciesName <- myspp[i]
+print(SpeciesName)
+print(i)
+
+  #beta0 intervals
+  bet1ci[i,1] <- l_CI[[i]]$p.025[1]
+  bet1ci[i,2] <- l_CI[[i]]$p.100[1]
+  bet1ci[i,3] <- l_CI[[i]]$p.500[1]
+  bet1ci[i,4] <- l_CI[[i]]$p.900[1]
+  bet1ci[i,5] <- l_CI[[i]]$p.975[1]
+  #beta1 intervals
+  bet1ci[i,6] <- l_CI[[i]]$p.025[2]
+  bet1ci[i,7] <- l_CI[[i]]$p.100[2]
+  bet1ci[i,8] <- l_CI[[i]]$p.500[2]
+  bet1ci[i,9] <- l_CI[[i]]$p.900[2]
+  bet1ci[i,10] <- l_CI[[i]]$p.975[2]
+  #sigma size intervals 
+  bet1ci[i,11] <- l_CI[[i]]$p.025[4]
+  bet1ci[i,12] <- l_CI[[i]]$p.100[4]
+  bet1ci[i,13] <- l_CI[[i]]$p.500[4]
+  bet1ci[i,14] <- l_CI[[i]]$p.900[4]
+  bet1ci[i,15] <- l_CI[[i]]$p.975[4]
+  
+  bet1ci[i,16] <- df %>% filter (TAXONOMIC_NAME == SpeciesName) %>% summarise(mid = first(midpoint))
+  bet1ci[i,17] <- df %>% filter (TAXONOMIC_NAME == SpeciesName) %>% summarise(Lmax = first(MaxLenFB))
+  bet1ci[i,18] <- df %>% filter (TAXONOMIC_NAME == SpeciesName) %>% summarise(Lmax = first(MaxSizeObs))
+  bet1ci[i,19] <- SpeciesName
+  
+}
+
+colnames(bet1ci) = c("b0_p025","b0_p10","b0_p50","b0_p90","b0_p975","p025","p10","p50","p90","p975","sigsize_p025","sigsize_p10","sigsize_p50","sigsize_p90","sigsize_p975","midpoint","MaxLenFB","MaxLenObs","species")
+
+#select only p50, p10, p90
+
+testExcl <- bet1ci %>% select(species, p025, p10, p50, p90, p975)
+## save the dataset 
+save(testExcl, file = "RDataOutputs/testExcl.RData")
+
+
+#load the original values
+load(file = "RDataOutputs/cleanedbet1ci.RData")
+
+testExcl$p50_old <- bet1ci$p50[match(testExcl$species, bet1ci$species)]
+testExcl$p10_old <- bet1ci$p10[match(testExcl$species, bet1ci$species)]
+testExcl$p90_old <- bet1ci$p90[match(testExcl$species, bet1ci$species)]
+
+testExcl$diff <- testExcl$p50_old/testExcl$p50
+testExcl$maxSize <- bet1ci$MaxLenObs[match(testExcl$species, bet1ci$species)]
+
+plot(testExcl$maxSize, testExcl$diff)
+abline(h=0)
+
+plot(testExcl$p10, testExcl$p10_old)
+abline(h=0)
+abline(v=0)
+
+plot(testExcl$p90, testExcl$p90_old)
+abline(h=0)
+abline(v=0)
+
+ggplot(testExcl, aes(x = p50_old, y = p50)) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0.05, linetype = "dashed", color = "grey20") +
+  geom_hline(yintercept = 0.05, linetype = "dashed", color = "grey20") +
+  geom_vline(xintercept = -0.05, linetype = "dashed", color = "grey20") +
+  geom_hline(yintercept = -0.05, linetype = "dashed", color = "grey20") +
+  geom_errorbar(aes(ymin = p10, ymax = p90), color = "darkgrey") +
+  geom_errorbarh(aes(xmin = p10_old, xmax = p90_old), color = "darkgrey") +
+  geom_point(color = "black") +
+  geom_abline(yintercept = 0, slope = 1, color = "orange", size = 1) +
+ # geom_text(aes(label=species), nudge_y = 0.001, size = 5) + 
+  theme_bw() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  #geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
+  # ggtitle("Comparing trends of body size in space and time") + 
+  labs(
+    y    = "Response with all data",
+    x    = "Response with lower 10% removed"
+  )
+
+
+
+```
+
+
+###maps
+```{r}
+#library(sp)
+aus<-map("worldHires", "Australia", fill=FALSE, xlim=c(110,160), ylim=c(-45,-5), mar=c(0,0,0,0))
+save(aus, file = "aus.RData")
+
+aus.sp <- map2SpatialPolygons(aus)
+par(mar=c(0,0,0,0))
+plot(aus.sp, asp=1)
+
+```
+
+### THE END ###
+
+
+### Compare mean sizes and sigma_size in/out MPA
+
+I would like to backcalculate mean size of species in each location inside and outside MPA at the start of observations and at the end of observations. The equation is fitted so that 2018 is year 0. Then I look at relative difference in mean body size inside/outside MPA. This would not necessarily go to this paper, but might be interesting for another paper 
+
+```{r}
+load(file = "RdataOutputs/BayesianResults4models.RData")
+load(file = "inputs/midpointsize.RData")
+
+Params3models$meanSizeInMpa2018 <- exp(Params3models$zero_inMPA50 + Params3models$inMPA50*0) #2018 is year 0
+Params3models$meanSizeOutMpa2018 <- exp(Params3models$zero_outMPA50 + Params3models$outMPA50*0)
+Params3models$RelSizeDiff2018 <- (Params3models$meanSizeInMpa2018 - Params3models$meanSizeOutMpa2018)/ Params3models$meanSizeInMpa2018
+
+Params3models$meanSizeInMpa1992 <- exp(Params3models$zero_inMPA50 + Params3models$inMPA50*(-26)) #1992-2018
+Params3models$meanSizeOutMpa1992 <- exp(Params3models$zero_outMPA50 + Params3models$outMPA50*(-26))
+Params3models$RelSizeDiff1992 <- (Params3models$meanSizeInMpa1992 - Params3models$meanSizeOutMpa1992)/ Params3models$meanSizeInMpa1992
+
+Params3models$sigmaSizeDiff <- Params3models$inss50 - Params3models$outss50
+length(which(Params3models$sigmaSizeDiff < 0))
+length(which(Params3models$sigmaSizeDiff > 0))
+
+
+temp <- colnames(Params3models)
+temp[1] <- "TAXONOMIC_NAME"
+colnames(Params3models) <- temp
+
+tt <- left_join(Params3models, midpointSize, by = "TAXONOMIC_NAME")
+ParamsTempModels <- tt
+
+CompareInOut <- ParamsTempModels %>% filter(RelSizeDiff1992 > -1)
+
+plot((Params3models$meanSizeInMpa2018 - Params3models$meanSizeInMpa1992)/Params3models$meanSizeInMpa2018)
+
+plot(ParamsTempModels$midp, ParamsTempModels$RelSizeDiff2018, pch = 19, ylim = c(-0.5,0.5), xlim = c(14, 19))
+points(ParamsTempModels$midp, ParamsTempModels$RelSizeDiff1992, pch = 19, col = 'red')
+abline (h=0)
+
+```
+
+
+### Plot mean SST to check 
+
+```{r, echo = F, eval = F}
+load(file  = "inputs/meangeoSST.RData")
+geogroups <- unique(meangeoSST$geogroup)
+
+### Check how many cells have mean SST at 23C, as there seems to be a gap in data
+
+#load(file = "inputs/meangeoSST.RData")
+plot(meangeoSST$annSST)
+meangeoSST$floorSST <- floor(meangeoSST$annSST)
+testtemp <- meangeoSST %>% group_by(floorSST) %>% summarise(counts = n())
+plot(testtemp$floorSST, testtemp$counts, pch = 19, xlab = "mean annual SST of a cell", ylab = "number of cells")
+abline (v=23)
+
+###
+
+plotdata <- meangeoSST %>% filter (geogroup == geogroups[1])
+plot(plotdata$year, plotdata$annSST, type = 'l', ylim = c(12, 20), xlab = "year", ylab = "annual SST")
+
+for (i in 2:50){
+  plotdata <- meangeoSST %>% filter (geogroup == geogroups[i])
+  points(plotdata$year, plotdata$annSST, type = 'l')
+}
+
+##
+plotdata <- meangeoSST %>% filter (geogroup == geogroups[51])
+plot(plotdata$year, plotdata$annSST, type = 'l', ylim = c(15, 22), xlab = "year", ylab = "annual SST")
+
+for (i in 52:100){
+  plotdata <- meangeoSST %>% filter (geogroup == geogroups[i])
+  points(plotdata$year, plotdata$annSST, type = 'l')
+}
+
+##
+plotdata <- meangeoSST %>% filter (geogroup == geogroups[101])
+plot(plotdata$year, plotdata$annSST, type = 'l', ylim = c(15, 25), xlab = "year", ylab = "annual SST")
+
+for (i in 101:150){
+  plotdata <- meangeoSST %>% filter (geogroup == geogroups[i])
+  points(plotdata$year, plotdata$annSST, type = 'l')
+}
+
+##
+plotdata <- meangeoSST %>% filter (geogroup == geogroups[151])
+plot(plotdata$year, plotdata$annSST, type = 'l', ylim = c(23, 28), xlab = "year", ylab = "annual SST")
+
+for (i in 152:200){
+  plotdata <- meangeoSST %>% filter (geogroup == geogroups[i])
+  points(plotdata$year, plotdata$annSST, type = 'l')
+}
+
+##
+plotdata <- meangeoSST %>% filter (geogroup == geogroups[201])
+plot(plotdata$year, plotdata$annSST, type = 'l', ylim = c(25, 30), xlab = "year", ylab = "annual SST")
+
+for (i in 202:length(geogroups)){
+  plotdata <- meangeoSST %>% filter (geogroup == geogroups[i])
+  points(plotdata$year, plotdata$annSST, type = 'l')
+}
+
+### Also plot daily temp 
+load(file = "inputs/dailySST_2018filled.RData")
+
+
+pdf(file="dailyTempAtGeogroups.pdf",onefile=TRUE)
+
+for (i in 1:length(geogroups)) {
+
+plotdata <- dailyTemp %>% filter (geogroup == geogroups[i]) %>% arrange(year, month, day)
+
+plot(plotdata$date, plotdata$sst, ylim = c(min(plotdata$sst)-1, max(plotdata$sst)+1), type = "l", main = paste(plotdata$Location[1], plotdata$long[1], plotdata$latt[1], sep = " "), ylab = "Daily temp, C")
+}
+
+dev.off()
+
+
+```
+
+### Empirical temp data for checking 
+
+```{r, eval = F}
+
+
+## EMPIRICAL OBSERVATIONS 
+## compare this model temperature with observations at national reference stations 
+#maria island long -term 
+
+mariaLT <- read.csv(file = "inputs/MariaLongTermTemp_raw.csv")
+dateT <- substr(mariaLT$TIME,1,10)
+temp <- strsplit(dateT, "-") # it turns it into a list
+temp2 <- matrix(unlist(temp),ncol=3,byrow=TRUE)
+temp3 <- apply(temp2,2,as.numeric) #turn that into numeric values rather than integer 
+mariaLT$year <- temp3[,1]
+mariaLT$month <- temp3[,2]
+mariaLT$day <- temp3[,3]
+
+mariaMon <- mariaLT %>% select (DEPTH, TEMP, PSAL, year, month, day)
+write.csv (mariaMon, file = "inputs/MariaLongTermMonitoring.csv")
+
+
+
+## now national reference stations elsewhere 
+NatRef <- read.csv(file = "inputs/ReferenceStationsTemp.csv")
+glimpse(NatRef)
+#again convert date
+dateT <- substr(NatRef$DATETIME_LOCAL ,1,10)
+temp <- strsplit(dateT, "-") # it turns it into a list
+temp2 <- matrix(unlist(temp),ncol=3,byrow=TRUE)
+temp3 <- apply(temp2,2,as.numeric) #turn that into numeric values rather than integer 
+NatRef$year <- temp3[,1]
+NatRef$month <- temp3[,2]
+NatRef$day <- temp3[,3]
+
+NatRef <- NatRef %>% select (REGION_DESCRIPTION, SITE_NAME, TEMP_C, DEPTH, LATITUDE, LONGITUDE, year, month, day)
+
+PortDaviesTemp <- NatRef %>% filter (REGION_DESCRIPTION == "West Coast")  # lattitude from -40.7 to -42.2, longitude from 144.6 to 145.2
+save(PortDaviesTemp, file = "inputs/PortDaviesTemp.RData")
+
+NinepinTemp <- NatRef %>% filter (REGION_DESCRIPTION == "South Coast") #long at 145.8, lat at -43.3
+save(NinepinTemp, file = "inputs/NinepinTemp.RData")
+
+BassStraitTemp <- NatRef %>% filter(REGION_DESCRIPTION == "East Coast") %>% filter (LATITUDE > -40.5) #147, -39.2
+save(BassStraitTemp, file = "inputs/BassStraitTemp.RData")
+
+BichenoTemp <- NatRef %>% filter(REGION_DESCRIPTION == "East Coast") %>% filter (LATITUDE < -41.2 & LATITUDE > -42.3)
+save(BichenoTemp, file = "inputs/BichenoTemp.RData")
+
+MariaTemp <- NatRef %>% filter(REGION_DESCRIPTION == "East Coast") %>% filter (LATITUDE <= -42.3)
+save(MariaTemp, file = "inputs/MariaTemp.RData")
+
+
+
+
+```
+
+### Write a bunch of csv files with outlier data: quantile based filtering
+(only for the purposes of RLS database cleaning)
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=F, eval = F}
+
+### For database cleaning 
+errors <- which(VertTrends$TAXONOMIC_NAME == "Trachinops caudimaculatus" & VertTrends$SizeClass > 15)
+errors <- c(errors,(which(VertTrends$TAXONOMIC_NAME == "Atypichthys strigatus" & VertTrends$SizeClass >25)))
+errors <- c(errors,(which(VertTrends$TAXONOMIC_NAME == "Trygonoptera testacea" & VertTrends$SizeClass >80)))
+#zeroSize <- which(VertTrends$SizeClass == 0)
+
+BigSizes1 <- VertTrends[errors,] %>% distinct (SurveyID, TAXONOMIC_NAME, .keep_all=T)
+ZeroSizes <- VertTrends[which(VertTrends$SizeClass == 0),] %>% distinct (SurveyID, TAXONOMIC_NAME, .keep_all=T)
+
+write.csv(BigSizes1, file = "BigSizes.csv")
+write.csv(ZeroSizes, file = "ZeroSizes.csv")
+
+HighTempOutlierData <- VertData[c(which(VertData$temphigh > 1)),] %>% distinct (SurveyID, TAXONOMIC_NAME, .keep_all = T) %>% arrange(desc(temphigh))
+write.csv (HighTempOutlierData, file  = "HightTempOutliers.csv")
+
+LowTempOutlierData <- VertData[c(which(VertData$templow > 1)),] %>% distinct (SurveyID, TAXONOMIC_NAME, .keep_all = T) %>% arrange(desc(templow))
+write.csv (LowTempOutlierData, file  = "LowTempOutliers.csv")
+
+bigsizeOutlier <- VertData[which(VertData$relSizeVeryBig < 0.6),] %>% distinct (SurveyID, TAXONOMIC_NAME, .keep_all = T) %>% arrange (relSizeVeryBig)
+write.csv (bigsizeOutlier, file = "BodySizeOutliers.csv")
+
+bigsizeOutlier <- VertData[which(VertData$relSizeVeryBig < 1),] %>% distinct (SurveyID, TAXONOMIC_NAME, .keep_all = T) %>% arrange (relSizeVeryBig)
+write.csv (bigsizeOutlier, file = "VeryBigSizes.csv")
+
+```
+
+
+### More in/out MPA temporal plots
+
+```{r, eval = F, echo = F}
+load(file = "RdataOutputs/TempOut_74spp.RData")
+AllParams <- AllParams %>% filter (locs != "Jurien") #  %>% filter (!species %in% notconv)
+outMPA <- AllParams %>% select(species, midpoint, Lmax, betaloc10, betaloc50, betaloc90, locs)
+outMPA$mpa <- 1
+
+outMPA$color <- "grey"
+outMPA$color[which(outMPA$betaloc50 < 0)] <- "orange"
+outMPA$color[which(outMPA$betaloc90 < 0)] <- "red" 
+outMPA$color[which(outMPA$betaloc50 > 0)] <- "lightblue" 
+outMPA$color[which(outMPA$betaloc10 > 0)] <- "blue"
+
+
+load(file = "RdataOutputs/TempIn_84spp.RData")
+inMPA <- AllParams %>% select(species, midpoint, Lmax, betaloc10, betaloc50, betaloc90, locs)
+inMPA$color <- "grey"
+inMPA$color[which(inMPA$betaloc50 < 0)] <- "orange"
+inMPA$color[which(inMPA$betaloc90 < 0)] <- "red" 
+inMPA$color[which(inMPA$betaloc50 > 0)] <- "lightblue" 
+inMPA$color[which(inMPA$betaloc10 > 0)] <- "blue"
+
+
+inMPA$mpa <-19
+
+betaloc <- rbind(outMPA, inMPA)
+betaloc <- betaloc %>% arrange(midpoint)
+
+##
+betaloc$color <- "grey"
+betaloc$color[which(betaloc$betaloc50 < 0)] <- "orange"
+betaloc$color[which(betaloc$betaloc90 < 0)] <- "red" 
+betaloc$color[which(betaloc$betaloc50 > 0)] <- "lightblue" 
+betaloc$color[which(betaloc$betaloc10 > 0)] <- "blue"
+
+
+plot(outMPA$midpoint[which(outMPA$locs == "Maria ")], outMPA$betaloc50[which(outMPA$locs == "Maria ")], pch = 1, col = outMPA$color[which(outMPA$locs == "Maria ")], ylim = c(-0.06, 0.06), xlim = c(14, 25), xlab = "Midpoint temperature of a species", ylab = "Slope of change per year")
+points(outMPA$midpoint[which(outMPA$locs == "Bichen")], outMPA$betaloc50[which(outMPA$locs == "Bichen")], pch = 1, col = outMPA$color[which(outMPA$locs == "Bichen")])
+points(outMPA$midpoint[which(outMPA$locs == "BassSt")], outMPA$betaloc50[which(outMPA$locs == "BassSt")], pch = 1, col = outMPA$color[which(outMPA$locs == "BassSt")])
+points(outMPA$midpoint[which(outMPA$locs == "Jervis")], outMPA$betaloc50[which(outMPA$locs == "Jervis")], pch = 1, col = outMPA$color[which(outMPA$locs == "Jervis")])
+points(outMPA$midpoint[which(outMPA$locs == "Port P")], outMPA$betaloc50[which(outMPA$locs == "Port P")], pch = 1, col = outMPA$color[which(outMPA$locs == "Port P")])
+points(outMPA$midpoint[which(outMPA$locs == "Tinder")], outMPA$betaloc50[which(outMPA$locs == "Tinder")], pch = 1, col = outMPA$color[which(outMPA$locs == "Tinder")])
+points(outMPA$midpoint[which(outMPA$locs == "Ninepi")], outMPA$betaloc50[which(outMPA$locs == "Ninepi")], pch = 1, col = outMPA$color[which(outMPA$locs == "Ninepi")])
+points(outMPA$midpoint[which(outMPA$locs == "Port D")], outMPA$betaloc50[which(outMPA$locs == "Port D")], pch = 1, col = outMPA$color[which(outMPA$locs == "Port D")])
+
+points(inMPA$midpoint[which(inMPA$locs == "Bichen")], inMPA$betaloc50[which(inMPA$locs == "Bichen")], pch = 19, col = inMPA$color[which(inMPA$locs == "Bichen")])
+points(inMPA$midpoint[which(inMPA$locs == "BassSt")], inMPA$betaloc50[which(inMPA$locs == "BassSt")], pch = 19, col = inMPA$color[which(inMPA$locs == "BassSt")])
+points(inMPA$midpoint[which(inMPA$locs == "Jervis")], inMPA$betaloc50[which(inMPA$locs == "Jervis")], pch = 19, col = inMPA$color[which(inMPA$locs == "Jervis")])
+points(inMPA$midpoint[which(inMPA$locs == "Port P")], inMPA$betaloc50[which(inMPA$locs == "Port P")], pch = 19, col = inMPA$color[which(inMPA$locs == "Port P")])
+points(inMPA$midpoint[which(inMPA$locs == "Tinder")], inMPA$betaloc50[which(inMPA$locs == "Tinder")], pch = 19, col = inMPA$color[which(inMPA$locs == "Tinder")])
+points(inMPA$midpoint[which(inMPA$locs == "Ninepi")], inMPA$betaloc50[which(inMPA$locs == "Ninepi")], pch = 19, col = inMPA$color[which(inMPA$locs == "Ninepi")])
+points(inMPA$midpoint[which(inMPA$locs == "Port D")], inMPA$betaloc50[which(inMPA$locs == "Port D")], pch = 19, col = inMPA$color[which(inMPA$locs == "Port D")])
+abline(h=0)
+
+betaloc$prot <- NA
+betaloc$prot[which(betaloc$mpa == 1)] <- "out MPA"
+betaloc$prot[which(betaloc$mpa == 19)] <- "in MPA"
+boxplot(betaloc50 ~ prot, data = betaloc, main = "Mean size slopes through time")
+abline(h=0)
+
+
+#multiple series example
+#ggplot(df1,aes(x,y))+geom_line(aes(color="First line"))+
+#  geom_line(data=df2,aes(color="Second line"))+
+#  labs(color="Legend text")
+
+```
+
+###Move files on GEM
+
+```{r}
+dir.create("on_rd/SpaceMar/new_folder9")
+load(file = "Species336.RData")
+
+for (i in 221:290) {
+  SpeciesName <- Species[i]
+  filename <- paste("on_rd/SpaceMar/",SpeciesName,".RData",sep="")
+  file.copy(filename, "on_rd/SpaceMar/new_folder3")
+
+}
+
+```
+
+### Processing German's & Rick's data for MPA status
+THIS IS NOT USED ANYMORE, as I got an updated data from Graham
+
+```{r, eval = F}
+
+#Rick's site dataset 
+## Load data about the protection status for global sites from Rick's studies
+# Rick's data has inforamtion for RLS sites but not for the MPA sites
+rls_prot <- read_csv("inputs/neoli.csv")  #file with protection status 
+rls_prot <- rls_prot %>% dplyr::select(SiteCode, Governance)
+
+#in neoli.csv data empty values for governance means that the site is not protected. So we replace them with 0
+length(which(is.na(rls_prot$Governance) == TRUE)) #2071
+length(rls_prot$Governance) #out of 2903
+# so about 900 sites are in MPA 
+
+# I replace the #N/A data with 0 assuming that absence of data means no protection 
+rls_prot$Governance[is.na(rls_prot$Governance)] <- 0
+
+## summarise site info
+load(file = "inputs/rlsst_mar.RData")
+
+## sumarrise bassian sites: 2577 sites
+sites_rls <- rls_st %>% 
+           group_by(SiteCode) %>% 
+           summarise (name = first(`Site name`), ecor = first(Ecoregion), location = first(Location), latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), depth = mean(Depth)) 
+
+## read German's datasets from Tasmania, where most MPA sites are
+mpa1 <- read_csv("inputs/TASprotect1.csv")  #MPA sites and their protection status
+mpa2 <- read_csv("inputs/TASprotect2.csv")
+
+# exract only the mpa status for each site
+sites_mpa1 <- mpa1 %>%
+  group_by(SiteCode) %>%
+    summarise(protection = first(RESERVE_STATUS_CODE)) 
+
+#Replace NTZ (not take zone) with 1, EXT with zero and RTZ (partial protection) with 0.5
+sites_mpa1$mpa <- NA
+sites_mpa1$mpa[which(sites_mpa1$protection == "NTZ")] <- 1
+sites_mpa1$mpa[which(sites_mpa1$protection == "EXT")] <- 0
+sites_mpa1$mpa[which(sites_mpa1$protection == "RTZ")] <- 0.5
+
+sites_mpa2 <- mpa2 %>%
+  group_by(SiteCode) %>%
+    summarise(protection = first(RESERVE_STATUS_CODE)) 
+
+sites_mpa2$mpa <- NA
+sites_mpa2$mpa[which(sites_mpa2$protection == "NTZ")] <- 1
+sites_mpa2$mpa[which(sites_mpa2$protection == "EXT")] <- 0
+sites_mpa2$mpa[which(sites_mpa2$protection == "RTZ")] <- 0.5
+
+algae <- read_csv("inputs/TASalgae.csv")  #more MPA sites and protection status as well as algal abundance
+sites_algae <- algae %>%
+  group_by(SiteCode) %>%
+    summarise(protection = first(RESERVE_STATUS_CODE), abundA = mean(TOTAL_NUMBER)) 
+
+sites_algae$mpa <- NA
+sites_algae$mpa[which(sites_algae$protection == "NTZ")] <- 1
+sites_algae$mpa[which(sites_algae$protection == "EXT")] <- 0
+sites_algae$mpa[which(sites_algae$protection == "RTZ")] <- 0.5
+
+
+##Now I need to merge all the matrices. Keep all original sites in the sites_rls summary. First add Rick's data
+sites.t <- merge(x = sites_rls, y = rls_prot, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+## now merge this with German's data 
+sites.tt <- merge(x = sites.t, y = sites_mpa1, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites.ttt <- merge(x = sites.tt, y = sites_mpa2, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+siteData <- merge(x = sites.ttt, y = sites_algae, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+
+#save(sites6, file = "SiteData_bas.RData") # to avoid reading all the matrices again 
+
+# select the four columns that have the protection status for different sites from different files and merge them to remove NAs
+protection <- siteData %>% select(SiteCode, Governance, mpa.x, mpa.y, mpa)
+temp <- t(apply(protection[,c(2:5)], 1, sort, na.last = T)) # now the first column has the protection information 
+## just to check that the rows did not get scrambled... 
+test1 <- apply(temp, 1, sum, na.rm=T)
+test2 <- apply(protection[,c(2:5)], 1, sum, na.rm = T)
+sum(test1-test2) ## this should be ABSOLUTE zero
+
+
+mpaFinal <- as.numeric(temp[,1]) # pick the first column now, if it has NA then the site does not have protection information. Note, 1 means no take, 0.5 means restricted take, and 0 means open to fishing 
+
+sites_rls$mpa <- mpaFinal # note we checked above that the order of sites is the same
+
+save(sites_rls, file = "inputs/sitesMPAstatus.RData")
+remove(temp, test1, test2, sites.t, sites.tt, sites.ttt)
+
+```
+
+### Monthly temp data (OLD)
+
+```{r}
+#MONTHLY model data
+
+#Read and modify the location temperature file. This file has been provided by Mike Sumner for the geographic groups defined using the code below. I have to split the date column into year and month 
+
+loctemp <- read.csv(file = "inputs/sitesTemp.csv")
+
+year <- as.character(loctemp$date)
+year1 <- strsplit(year, "-") #split by / #split the date into day, month and year
+year2 <- matrix(unlist(year1),ncol=3,byrow=TRUE)
+year2 <- apply(year2,2,as.numeric) #turn that into numeric values rather than integer 
+loctemp$year <- year2[,1]
+loctemp$month <- year2[,2]
+loctemp$day <- year2[,3]
+
+columns <- colnames(loctemp)
+columns[1] <- "geogroup"
+colnames(loctemp) <- columns
+
+#Calculate mean annual temperature for each geogroup!!!
+meangeoSST <- loctemp %>% group_by(geogroup, year) %>% summarise (annSST = mean(meansst))
+save(meangeoSST, file  = "inputs/meangeoSST.RData")
+```
+
+
+### Old space plot 
+
+```{r}
+load(file = "RdataOutputs/FinalSpaceBet1ci_335spp.RData")
+
+## Sigma size bimodal distribution, but it does not seem to affect beta1 much
+bimod <- c("Arripis trutta", "Caesio caerulaurea","Caesio teres", "Abudefduf bengalensis", "Chromis viridis", "Mugil cephalus", "Mulloidichthys vanicolensis", "Pterocaesio marri", "Pterocaesio tile", "Scorpis lineolata", "Trachurus declivis")
+#Only one species did not converge on b1, I have to remove it 
+notconv <- c("Trachinops taeniatus")
+
+bet1ci <- bet1ci %>% filter (!species %in% notconv)
+
+## add random variable to length for better plotting 
+ranlen = runif(n = length(bet1ci$b0_p10), min = 0, max = 1)
+bet1ci$MaxLenObsRan <- bet1ci$MaxLenObs + ranlen
+
+#remove species with large CI
+bet1ci$range <- bet1ci$p90 - bet1ci$p10
+plot(bet1ci$range)
+abline (h=0.2)
+bet1ci <- bet1ci %>% filter (range < 0.2) #remove 10 cases with wide CI
+
+bet1ci <- bet1ci %>% arrange(midpoint)
+
+save(bet1ci, file = "RDataOutputs/cleanedbet1ci.RData")
+
+bet1ci$color <- "black"
+bet1ci$color[which(bet1ci$p90 < 0)] <- "red" 
+bet1ci$color[which(bet1ci$p10 > 0)] <- "blue" 
+
+## Fig 2
+ggplot(bet1ci, aes(midpoint, p50, color = color)) +
+  geom_hline(yintercept = 0) + 
+#  geom_vline(xintercept = 23) + 
+#  geom_vline(xintercept = 26.5) +
+  geom_point() +
+  geom_errorbar(aes(ymin = p10, ymax = p90), size = 0.2) +
+  scale_color_manual(values = c("grey", "red", "blue"),
+                     labels=c("no change", "larger", "smaller"),
+                     guides(name = "size response to SST")) +
+#  scale_y_continuous(breaks = seq(min(bet1ci$midpoint, na.rm=T), max(bet1ci$midpoint, na.rm=T), by = 1)) +
+  theme_bw() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  ggtitle("Species response to temperature (slope of 0.1 means ca10% change per 1C of SST)") + 
+  labs(
+#    x    = "Species midpoint temperature",
+     x    = "Log of max observed length in cm (3=20cm, 4=55cm)",
+    y    = "Slope of the body length vs annual SST"
+  ) +
+NULL
+
+pbet1ci$niche <- NA
+bet1ci$niche[which(bet1ci$midpoint < 23)] <- "temperate"
+bet1ci$niche[which(bet1ci$midpoint > 23)] <- "tropical"
+boxplot(p50 ~ niche, data = bet1ci, main = "Mean size slopes through space")
+#boxplot(bet1ci$p50)
+abline(h = 0)
+
+```
+
+
+### Old bits of code 
+
+```{r}
+
+## Load Bassian site data. This data was compiled earlier from German's work on MPA effects. It has values of 0, 0.5 and 1, where 0.5 means restricted take zone. 
+load(file="inputs/sitesMPAstatus.RData")  
+#length(which(is.na(siteData$mpa) == TRUE)) # 67 out of 531 sites have NA for the mpa column
+#siteData$mpa[is.na(siteData$mpa)] <- 0  #assume that sites for which no protection data is available are not protected 
+
+#add extra variable to the main rls_all data set to reflect site protection. This is only for Tasmanian sites
+VertData$mpa <- siteData$mpa[match(VertData$SiteCode, siteData$SiteCode)]
+
+## Load data about the protection status for global sites from Rick's studies
+rls_prot <- read_csv("neoli.csv")  #file with protection status 
+rls_prot <- rls_prot %>% dplyr::select(SiteCode, Governance)
+
+#in neoli.csv data empty values for governance means that the site is not protected. So we replace them with 0
+length(which(is.na(rls_prot$Governance) == TRUE)) #2071
+length(rls_prot$Governance) #out of 2903
+# I also replace the #N/A data with 0 assuming that absence of data means no protection 
+rls_prot$Governance[is.na(rls_prot$Governance)] <- 0
+
+## merge global protection data with the rls_all data, overwriting NA values in the mpa column (but not existing values, so German's data takes precedence). The text in brackets says that if mpa column has na value (conditional test), use value from Governance column (yes), or use value from mpa column if no na is found (no). Then remove the Governance column 
+test_data = within(merge(VertData, rls_prot, by="SiteCode", all.x=TRUE), {mpa <- ifelse(is.na(mpa),Governance,mpa); Governance <- NULL})
+
+VertData <- test_data
+
+
+```
+
+
+### Prepare data for temporal analyses
+
+For thi sstep I only select locations that have more than 10 years of data and combine RLS location categories into larger groups by sampling only the first 6 characters and grouping 
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, echo=F, eval = F}
+
+load(file = "VertDataWithMPA_mar.RData")
+
+#locations with at least 10 years 
+longtermloc <- VertData %>% group_by (Location) %>% summarise(n_years = n_distinct(year)) %>% filter (n_years > 10)
+
+VertDataTemp <- VertData %>% filter (Location %in% longtermloc$Location) %>% filter(Location != "New South Wales (Other)")
+
+## after adding German's and Rick's neoli data set we will have many sites in Bass St, Jervis Bay and Jurien Bay with NA mpa status. So I assume that they are not protected and add 0 MPA status there 
+VertDataTemp$mpa[which(is.na(VertDataTemp$mpa)==TRUE)] <- 0
+
+#replace half protection with zero protection just to be conservative
+VertDataTemp$mpa[which(VertDataTemp$mpa==0.5)] <- 0
+
+VertDataTemp$Locs <- substr(VertDataTemp$Location, 1,6)
+
+#Pool Bass Strait and Kent Group togehter as they are very close to each other. Also pool Port Sydney and Sydney
+VertDataTemp$lt=ifelse(VertDataTemp$Locs=="Bass S"|VertDataTemp$Locs=="Kent G", "BassSt", as.character(VertDataTemp$Locs)) 
+VertDataTemp$Loc=ifelse(VertDataTemp$lt=="Port S"|VertDataTemp$lt =="Sydney" ,"Sydney", as.character(VertDataTemp$lt)) 
+
+SizeDataTemp <- VertDataTemp %>% dplyr::select(SiteCode, Location, Loc, mpa, TAXONOMIC_NAME, SizeClass, day, month, year, geogroup, midpoint, meansst, MaxSize)
+
+##save the dataset 
+save(SizeDataTemp, file = "FishSizeTemporal_mar.RData")
+
+
+### test temporary
+#load(file  = "inputs/FishSizeTemporal_mar.RData")
+#sites_mpa_old <- SizeDataTemp %>% filter (Loc %in% longtermLoc) %>% group_by(SiteCode) %>% summarise(mpa = first(mpa), loc_short = first(Loc), loc_full = first(Location)) %>% arrange(loc_full)
+#mpa_test <- full_join(sites_mpa_status_longterm, sites_mpa_old, by = "SiteCode")
+#mpa_test$diff = mpa_test$mpa.x - mpa_test$mpa.y
+
+##
+#longtermlocs  = c("Bicheno External"    ,   "Bicheno Internal"    ,   "Maria External"      ,   "Maria Island Reserve"  , "Maria Island Vincinity", "Ninepin External" ,      "Ninepin Internal"   ,    "Port Davey" ,          "Port Phillip Heads"   ,  "Tinderbox External"  ,   "Tinderbox Reserve" , "Port Phillip Bay" )
+
+
+```
+
+### Select data: 9 locs, in MPA, 20 ind per loc/year, 7 years
+81 species 
+
+```{r, eval = F}
+
+load(file="inputs/FishSizeTemp9locsMPA_April.RData")
+
+df <- dfMPA9
+
+# set factors
+df$TAXONOMIC_NAME <- factor(df$TAXONOMIC_NAME)
+df$FLoc <- factor(df$Loc)
+df$Size <- factor(as.character(round(df$SizeClass, 1)), 
+  levels = c("2.5",  "5", "7.5", "10", "12.5", "15", "20", "25", "30",
+    "35", "37.5", "40", "50", "62.5", "75", "87.5", "90","100", "112.5",
+    "125", "137.5", "150", "162.5", "175", "187.5", "200", "250", "300")) 
+
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME) %>%
+  summarise(
+    records = n(),
+    size    = round(mean(SizeClass), 2),
+    years   = length(unique(year)),
+    Locs    = length(unique(Loc))
+  ) %>%
+  arrange(desc(records)) # sort by number of records
+
+# extract data on observed size classes
+yVals <- sort(unique(df$SizeClass)) # fish size classes
+I     <- length(yVals)              # number of fish size classes
+yCuts <- rep(0, I-1)                # fish sizes that split size classes
+for (i in 2:I) {
+  yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+}
+
+# decide which records to retain for analyses
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME, Loc, year) %>%
+  summarise(records = n()) %>%
+  filter(records >= 20) # must have 20 obs per year at a location
+
+# must be at least 20 obervations at a site-mpa within a given year
+df_ok <- semi_join(df, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc", "year"))
+
+df_summary <- df_ok %>%
+  group_by(TAXONOMIC_NAME, Loc) %>%
+  summarise(
+    num_years = length(unique(year)) # years per location
+  ) %>%
+  filter(num_years >= 7) %>% # must have 8 years at a loc per mpa grp
+  arrange(TAXONOMIC_NAME, Loc)
+
+# remove data with less than 10 yrs
+df_ok <- semi_join(df_ok, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc")) 
+
+ok_species <- sort(unique(df_ok$TAXONOMIC_NAME)) # show species that satisfy criteria
+length(ok_species)
+
+#save(df_ok, file = "df_22sp9LocsInMPA.RData")
+#save(ok_species, file = "Species_22sp9LocsInMPA.RData")
+
+```
+
+### Select data: 9 locs, out MPA, 20 ind per loc/year, 7 years
+71 species
+
+```{r, eval = F}
+
+load(file="inputs/FishSizeTemp9locsNoMPA_April.RData")
+
+df <- dfNoMPA9
+
+# set factors
+df$TAXONOMIC_NAME <- factor(df$TAXONOMIC_NAME)
+df$FLoc <- factor(df$Loc)
+df$Size <- factor(as.character(round(df$SizeClass, 1)), 
+  levels = c("2.5",  "5", "7.5", "10", "12.5", "15", "20", "25", "30",
+    "35", "37.5", "40", "50", "62.5", "75", "87.5", "90","100", "112.5",
+    "125", "137.5", "150", "162.5", "175", "187.5", "200", "250", "300")) 
+
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME) %>%
+  summarise(
+    records = n(),
+    size    = round(mean(SizeClass), 2),
+    years   = length(unique(year)),
+    Locs    = length(unique(Loc))
+  ) %>%
+  arrange(desc(records)) # sort by number of records
+
+# extract data on observed size classes
+yVals <- sort(unique(df$SizeClass)) # fish size classes
+I     <- length(yVals)              # number of fish size classes
+yCuts <- rep(0, I-1)                # fish sizes that split size classes
+for (i in 2:I) {
+  yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+}
+
+# decide which records to retain for analyses
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME, Loc, year) %>%
+  summarise(records = n()) %>%
+  filter(records >= 20) # must have 20 obs per year at a location
+
+# must be at least 20 obervations at a site-mpa within a given year
+df_ok <- semi_join(df, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc", "year"))
+
+df_summary <- df_ok %>%
+  group_by(TAXONOMIC_NAME, Loc) %>%
+  summarise(
+    num_years = length(unique(year)) # years per location
+  ) %>%
+  filter(num_years >= 7) %>% # must have 10 years at a loc per mpa grp
+  arrange(TAXONOMIC_NAME, Loc)
+
+# remove data with less than 10 yrs
+df_ok <- semi_join(df_ok, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc")) 
+
+ok_species <- sort(unique(df_ok$TAXONOMIC_NAME)) # show species that satisfy criteria
+length(ok_species)
+
+```
+
+### Select data: 9 locs, pooled inside/outside MPA, 20 ind per loc/year, 7 years
+105 species
+
+```{r, eval = F}
+
+load(file="inputs/TemporalPooled105spp.RData")
+
+df <- df
+
+# set factors
+df$TAXONOMIC_NAME <- factor(df$TAXONOMIC_NAME)
+df$FLoc <- factor(df$Loc)
+df$Size <- factor(as.character(round(df$SizeClass, 1)), 
+  levels = c("2.5",  "5", "7.5", "10", "12.5", "15", "20", "25", "30",
+    "35", "37.5", "40", "50", "62.5", "75", "87.5", "90","100", "112.5",
+    "125", "137.5", "150", "162.5", "175", "187.5", "200", "250", "300")) 
+
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME) %>%
+  summarise(
+    records = n(),
+    size    = round(mean(SizeClass), 2),
+    years   = length(unique(year)),
+    Locs    = length(unique(Loc))
+  ) %>%
+  arrange(desc(records)) # sort by number of records
+
+# extract data on observed size classes
+yVals <- sort(unique(df$SizeClass)) # fish size classes
+I     <- length(yVals)              # number of fish size classes
+yCuts <- rep(0, I-1)                # fish sizes that split size classes
+for (i in 2:I) {
+  yCuts[i-1] <- log(0.5*(yVals[i-1] + yVals[i])) 
+}
+
+# decide which records to retain for analyses
+df_summary <- df %>%
+  group_by(TAXONOMIC_NAME, Loc, year) %>%
+  summarise(records = n()) %>%
+  filter(records >= 20) # must have 20 obs per year at a location
+
+# must be at least 20 obervations at a site-mpa within a given year
+df_ok <- semi_join(df, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc", "year"))
+
+df_summary <- df_ok %>%
+  group_by(TAXONOMIC_NAME, Loc) %>%
+  summarise(
+    num_years = length(unique(year)) # years per location
+  ) %>%
+  filter(num_years >= 7) %>% # must have 10 years at a loc per mpa grp
+  arrange(TAXONOMIC_NAME, Loc)
+
+# remove data with less than 10 yrs
+df_ok <- semi_join(df_ok, df_summary, 
+  by = c("TAXONOMIC_NAME", "Loc")) 
+
+ok_species <- sort(unique(df_ok$TAXONOMIC_NAME)) # show species that satisfy criteria
+length(ok_species)
+
+save(df_ok, file = "inputs/TemporalPooled105spp.RData")
+
+```
+
+
+### Old text
+
+
+### Introduction 
+
+Temperature size rule and Bergman's rule suggest that ectotherm grow larger in cold temperatures. Based on experimental data the expected decrease in adult body size is about 3-5% for each degree of warming (Forster et al. 2012, Horne et al. 2015), Decrease in body size is stronger in larger individuals (Forster et al. 2012). Decreasing ectotherm body sizes are seen as a third universal response to global warming (e.g. Daufresne et al. 2009). 
+
+In 80% of cases (Angilletta et al.) TSR has been reported, but there are also exceptions of reverse TSR. Also, Angilletta et al. (2009) show cases of how temperature might have direct TSR (reduced body size) and indirect reverse TSR (decreased survival leads to lower density dependence and increased growth) cancelling each other out. 
+
+However, temperature-size rule is mostly observed in experimental conditions, when organisms are fed ad libitum, and it is unclear whether it applies in field conditions, where multiple interacting factors are invovled. While decreasing fish body sizes have been reported in a number of commercial stocks (e.g. Sharpe and Hendry 2009, Audzijonyte et al. 2013, 2016, Baudron et al. 2014 and others), most of the observations come from harvested species. It is not clear whether changes in body sizes are caused by temperature or fishing (through phenotypic or density dependent changes, or through fisheries induced evolution), as both factors are strongly linked. Moreover, gauging fish size trends from published studies will inevitably suffer from negative result publishing bias. 
+
+The main question of this analyses is to assess the relationship between the avarage observed individual size *WITHIN A SPECIES* and site temperature. This relationship could be negative, in that lower temperature will lead to bigger sizer (temperature size rule), or positve in that lower temperature will correlate will inhibit growth ("hotter is better" hypothesis), or zero, where various factors will cancel each other out. To explore this relationship we will: 
+1) Look at body size - temperature correlation on a spatial scale for all Australian visual survey sites. 
+2) Look at the temporal trends in body size in areas with long term observations and different temperature trends
+
+Spatial analyses 
+
+Group all RLS/MPA observations onto a half a degree grid. This gives 284 unique cells with data. For each of these cells I calculate mean lat and long of all sites within a cell. For each of the 284 points I get SST temperature predictions starting in 1981 from Australian temperature models. The temperature data was extracted by Mike Sumner. The difference between the minimum and maximum mean temperature of these 284 geosites is 18C, so we are spanning quite a large temperature range. 
+
+
+### Temporal analyses: thoughts
+
+After meeting with Shane: compare inside-outside MPA for all species that have small CI (not only those that are significant, because small CI around zero is still good). 
+Run outside MPA model with yearRE but no MPA effect 
+
+Some analyses that were done before and later abandoned. 
+
+1. Including year RE makes beta_loc CI massive (10 times bigger than without year RE). Sine we don't have very long time series a few years of a trend are likely to be attributed to year RE. The risk of not including year RE is that we are more likely to attribute random variation to a trend. However, if we are looking for general patterns across ca 80 species and 9 locations (ca 230 valid combinations), the erroneous inference of trend is equally likely into both directions and should cancel each other out. 
+
+2. Including MPA effect in the intercept makes two assumptions. First, we assume that MPA effect is identical in all location, which is not the case, as the effect depends on species composition and fishing pressure. Second, it assumes that trends inside and outside MPA are identical, and it forces the model to fit one trend. Again, this a wrong assumption, because we might expect mean size trend to go down outside MPA due to fishing but to go up inside MPA due to increasing accumulation of large fish. So the assumption of common trend will definitely be considered wrong by the co-authors and reviewers. 
+
+3. Since we cannot include location specific MPA intercepts and trends, my solution is to analyse data inside and outside MPA separately and fit the model without any MPA effects. With these two datasets we will look if there are conflicting trends per species/location combination. If some species are going down in size outside MPA, it could be due to fishing. So is this trend also matched inside MPA?
+
+4. Initially I included all locations that had at least 10 years. This included Sydney, Rottnest and ... which have been sampled in the last 10 years only. Yet, when one model is fitted to all 12 locations, these three locations tend to show very weird trends that are affected by one or two last years, and have no data in the earlier years. Most likely these trends would dissapear if I include year RE, but for now I rather remove the three locations, and focus on 9 locations which have a dataspan of at least 15 years (some have 26 years)
+
+
+
+
