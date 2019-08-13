@@ -253,7 +253,7 @@ save(df_lowerSigma, file = "data8.RData")
 
 ### First set of Bayesian analyses: main analysis code 
 
-The data files above were analysed on clusters and this is the code to be run for the main spatial analysis. Analyses don't have to be run here because ouputs are saved and available
+The data files above were analysed on clusters and this is the code to be run for the main spatial analysis. Analyses don't have to be run here because ouputs are saved and available. The main analysis is done using the spatial_main.stan code. For some species spatial analyses had to be repeated with updated priors (higher b0 or lower b0) and related .stan files are named accordingly 
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
 library(rstan)
@@ -342,7 +342,8 @@ stan_dat <- list(
   yr   = df_srv$year              # year
 )
 
-fit <- stan(file = 'stan_models/spatial_largerb0.stan', data = stan_dat, iter = 1000, warmup = 500, chains = 3, seed = 66, refresh = 250)
+
+fit <- stan(file = 'stan_models/spatial_main.stan', data = stan_dat, iter = 1000, warmup = 500, chains = 3, seed = 66, refresh = 250)
 
 save(fit, file = paste("... place for saved fit results.../",SpeciesName,".RData",sep=""))
 
