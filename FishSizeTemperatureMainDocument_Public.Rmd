@@ -703,10 +703,20 @@ df_fit$color[which(df_fit$p90 < 0)] <- -1
 df_fit$color[which(df_fit$p10 > 0)] <- 1 
 df_fit$color <- factor(df_fit$color)
 
+data_subset0 <- df_fit %>% filter(color == -1) #decreasing
+data_subset1 <- df_fit %>% filter(color == 1) # increasing 
+data_subset2 <- df_fit %>% filter(color == 0) #no change
+
 p1 <- ggplot(df_CI) +
   geom_abline(intercept = 0, slope = 0, linetype = "dashed") +
-  geom_point(data = df_fit, aes(x = x, y = y, color = color)) +
-  geom_errorbar(data = df_fit, aes(x = x, ymin = p10, ymax = p90, color = color), width=0) +
+#  geom_point(data = df_fit, aes(x = x, y = y, color = color)) +
+  geom_point(data = data_subset2, aes(x = x, y = y, col = "grey")) + 
+  geom_point(data = data_subset1, aes(x = x, y = y, color = "blue")) + 
+  geom_point(data = data_subset0, aes(x = x, y = y, color = "red")) + 
+#  geom_errorbar(data = df_fit, aes(x = x, ymin = p10, ymax = p90, color = color), width=0) +
+  geom_errorbar(data = data_subset2, aes(x = x, ymin = p10, ymax = p90, color = "grey"), width=0) +
+  geom_errorbar(data = data_subset1, aes(x = x, ymin = p10, ymax = p90, color = "blue"), width=0) +
+  geom_errorbar(data = data_subset0, aes(x = x, ymin = p10, ymax = p90, color = "red"), width=0) +
   geom_polygon(data = df_polygon, aes(x = x, y = y), fill = "#feb24c") +
   geom_line(aes(x = x, y = mu_500)) +
   labs(
@@ -864,10 +874,21 @@ df_fit$color <- factor(df_fit$color)
 ranlen = runif(n = length(df_fit$x), min = 0.05, max = 0.15)
 df_fit$x_rand <- df_fit$x + ranlen
 
+
+data_subset0 <- df_fit %>% filter(color == -1) #decreasing
+data_subset1 <- df_fit %>% filter(color == 1) # increasing 
+data_subset2 <- df_fit %>% filter(color == 0) #no change
+
 p2 <- ggplot(df_CI) +
   geom_abline(intercept = 0, slope = 0, linetype = "dashed") +
-  geom_point(data = df_fit, aes(x = x_rand, y = y, color = color)) +
-  geom_errorbar(data = df_fit, aes(x = x_rand, ymin = p10, ymax = p90, color = color), width=0) +
+#  geom_point(data = df_fit, aes(x = x, y = y, color = color)) +
+  geom_point(data = data_subset2, aes(x = x_rand, y = y, col = "grey")) + 
+  geom_point(data = data_subset1, aes(x = x_rand, y = y, color = "blue")) + 
+  geom_point(data = data_subset0, aes(x = x_rand, y = y, color = "red")) + 
+# geom_errorbar(data = df_fit, aes(x = x_rand, ymin = p10, ymax = p90, color = color), width=0) +
+  geom_errorbar(data = data_subset2, aes(x = x_rand, ymin = p10, ymax = p90, color = "grey"), width=0) +
+  geom_errorbar(data = data_subset1, aes(x = x_rand, ymin = p10, ymax = p90, color = "blue"), width=0) +
+  geom_errorbar(data = data_subset0, aes(x = x_rand, ymin = p10, ymax = p90, color = "red"), width=0) +
   geom_polygon(data = df_polygon, aes(x = x, y = y), fill = "#feb24c") +
   geom_line(aes(x = x, y = mu_500)) +
   labs(
@@ -1768,12 +1789,13 @@ ggplot(df_fit, aes(x = x, y = y)) +
   #geom_abline(yintercept = beta0, slope = beta1, color = "red", size = 1) +
  # xlim(-0.06,0.06) + ylim(-0.15,0.25) +
   theme_bw() +
-  geom_text(x=-0.045, y=0.25, label="rho = 0.28, p = 0.005", size = 7, fontface = 3) + 
-  theme(
+#  geom_text(x=-0.045, y=0.25, label="rho = 0.28, p = 0.005", size = 7, fontface = 3) + 
+  geom_text(x=-0.045, y=0.25, label= expression (paste(rho, " = 0.28, p = 0.005")), size = 7, fontface = 3) + 
+    theme(
     panel.border = element_blank(), panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),
-    axis.title.x = element_text(size=16),
-    axis.title.y = element_text(size=16),
+    axis.title.x = element_text(size=18),
+    axis.title.y = element_text(size=18),
     axis.text=element_text(size=12)) +
   #geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
   # ggtitle("Comparing trends of body size in space and time") + 
