@@ -41,11 +41,6 @@ load(file = "inputs/fish_data.RData") #the data file is called fish_temp
 #check that we have 335 species 
 length(unique(main_data$TAXONOMIC_NAME))
 
-#load australian base file - this should be replaced, because google now requires payment for using files 
-#australia = get_map(location = c(lon = 135, lat = -30), zoom = 4, maptype = "satellite")
-#save(australia, file = "australia.RData")
-load(file = "inputs/australia.RData")
-
 
 ```
 
@@ -138,6 +133,7 @@ df$Size <- factor(as.character(round(df$SizeClass, 1)),
 spp <- unique(df$TAXONOMIC_NAME)
 
 ## select which species to plot. For manuscript purposes I plot only 20 species
+#For other species change the index of species to plot in the line below
 df_summary <- df %>% filter (TAXONOMIC_NAME %in% spp[c(1:20)]) %>% group_by(TAXONOMIC_NAME, Size) %>% summarise(n = n()) 
 
 ggplot(df_summary, aes(x = Size, y = n, group = TAXONOMIC_NAME)) +
@@ -358,7 +354,7 @@ stan_dat <- list(
 
 fit <- stan(file = 'stan_models/spatial_main.stan', data = stan_dat, iter = 1000, warmup = 500, chains = 3, seed = 66, refresh = 250)
 
-save(fit, file = paste("... place for saved fit results.../",SpeciesName,".RData",sep=""))
+save(fit, file = paste("... place for saved fit results.../",SpeciesName,".RData",sep="")) #NOTE, saved fit results are not provided, but can be generated with this code 
 
 }
 
@@ -522,6 +518,7 @@ SpeciesName <- Species[i]
 print(SpeciesName)
 print(i)
 
+  #enter the directory for saved Bayesian fits from the chunk above
   load(file = paste("...save outputs here... /",SpeciesName,".RData",sep=""))
   
   extracted <- rstan::extract(fit, pars=model_params)
@@ -582,7 +579,6 @@ colnames(bet1ci) = c("b0_p025","b0_p10","b0_p50","b0_p90","b0_p975","p025","p10"
 
 save(bet1ci, file = "analysesOutputs/slopesInSpace335spp.RData")
 
-write.csv(bet1ci, file = "analysesOutputs/slopesInSpace.csv")
 
 ```
 
@@ -1298,7 +1294,7 @@ library(rstan)
 #load(file="inputs/FishSizeTemp9locsMPA_April.RData")
 #df <- dfMPA9
 
-#If using for pooled data from inside and outside MPA
+#If using pooled data from inside and outside MPA
 load(file = "inputs/VertData_Temporal.RData")
 df <- VertData_temporal
 
@@ -1693,6 +1689,8 @@ colnames(AllParamsOut) <- correct_columns
 
 ### Extended data Fig7: trends per location
 
+###TODO### fix temptrend
+
 ```{r warning=FALSE, message=FALSE, eval=T, echo=FALSE, fig.width=10, fig.height=6}
 
 load(file = "analysesOutputs/BayesTempPool_105spp.RData") 
@@ -1830,8 +1828,9 @@ knitr::kable(temp_slopes_to_print, digits = 4)
 
 ### Combine temporal and spatial slopes
 
-``` {r, warning=FALSE, message=FALSE, echo = F, eval = F}
-rm(list = ls())
+```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
+
+#rm(list = ls())
 load(file = "analysesOutputs/BayesTempPool_105spp.RData") 
 notwarming = c("Jurien")
 
@@ -1925,7 +1924,6 @@ ggplot(df_fit, aes(x = x, y = y)) +
 
 
 ```
-
 
 ### Fig 3 plot: one for each species
 
