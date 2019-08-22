@@ -12,7 +12,6 @@ output:
 ---
 ### to do
 1. change map shapefile 
-2. code from Shane for long-term SST trends
 
 ### Load libraries
 
@@ -86,11 +85,23 @@ colvector$tempF <- seq(from = 12, to = 29)
 # add a temperature colour identifier to each geosite
 rls_aus_geo$color <- colvector$col[match(rls_aus_geo$tempF, colvector$tempF)]
 
-ggmap(australia, extent = "panel", legend = "bottomright") +
-  geom_point(aes(x = rls_aus_geo$long, y = rls_aus_geo$latt), data = rls_aus_geo, size = (rls_aus_geo$species/30), color = rls_aus_geo$color) +
-  ggtitle("Mean annual SST of each geographic cell (12 to 29), circle size proportional to species number") + 
+#load long term location coordinates
+load(file = "inputs/longLoc.RData")
+
+#Plot sites on a shapefile
+rgdal::readOGR(dsn = ".", "aust_cd66states") %>% 
+  fortify() %>% 
+  ggplot() +
+  geom_path(aes(x = long, y = lat, group = group), color = 'darkgrey', size = .3) +
+  geom_point(aes(x = rls_aus_geo$long, y = rls_aus_geo$latt), data = rls_aus_geo, size = (rls_aus_geo$species/30), color = rls_aus_geo$color) + 
+  geom_point(aes(x = longLoc$long, y = longLoc$lat), data = longLoc, shape = 8, size = 2, color = "black") +
+  ggtitle("Mean annual SST of each geographic cell (12 to 29)") + 
   xlab("Longitutde") + ylab("Latitude")
 
+#ggmap(australia, extent = "panel", legend = "bottomright") +
+#  geom_point(aes(x = rls_aus_geo$long, y = rls_aus_geo$latt), data = rls_aus_geo, size = (rls_aus_geo$species/30), color = rls_aus_geo$color) +
+#  ggtitle("Mean annual SST of each geographic cell (12 to 29), circle size proportional to species number") + 
+#  xlab("Longitutde") + ylab("Latitude")
 
 ```
 
@@ -106,6 +117,8 @@ load(file = "inputs/dailySST.RData")
 
 #Calculate mean annual temperature for each geogroup (cell) and save
 meangeoSST <- dailyTemp %>% group_by(geogroup, year) %>% summarise (annSST = mean(sst), count = n())
+
+save(meangeoSST, file = "inputs/meangeoSST.RData")
 
 ```
 
@@ -429,7 +442,7 @@ model {
 
 ```
 
-### Extended data Fig.2: Spatial postanalyses processing: traceplots
+### Extended data Fig.3: Spatial postanalyses processing: traceplots
 this code was used to assess convergence; individual species traceplots are not provided here, but can be reproduced using the chunks above and this code
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
@@ -711,11 +724,11 @@ p1 <- ggplot(df_CI) +
   geom_abline(intercept = 0, slope = 0, linetype = "dashed") +
 #  geom_point(data = df_fit, aes(x = x, y = y, color = color)) +
   geom_point(data = data_subset2, aes(x = x, y = y, col = "grey")) + 
-  geom_point(data = data_subset1, aes(x = x, y = y, color = "blue")) + 
-  geom_point(data = data_subset0, aes(x = x, y = y, color = "red")) + 
-#  geom_errorbar(data = df_fit, aes(x = x, ymin = p10, ymax = p90, color = color), width=0) +
   geom_errorbar(data = data_subset2, aes(x = x, ymin = p10, ymax = p90, color = "grey"), width=0) +
+  geom_point(data = data_subset1, aes(x = x, y = y, color = "blue")) + 
   geom_errorbar(data = data_subset1, aes(x = x, ymin = p10, ymax = p90, color = "blue"), width=0) +
+    geom_point(data = data_subset0, aes(x = x, y = y, color = "red")) + 
+#  geom_errorbar(data = df_fit, aes(x = x, ymin = p10, ymax = p90, color = color), width=0) +
   geom_errorbar(data = data_subset0, aes(x = x, ymin = p10, ymax = p90, color = "red"), width=0) +
   geom_polygon(data = df_polygon, aes(x = x, y = y), fill = "#feb24c") +
   geom_line(aes(x = x, y = mu_500)) +
@@ -883,11 +896,11 @@ p2 <- ggplot(df_CI) +
   geom_abline(intercept = 0, slope = 0, linetype = "dashed") +
 #  geom_point(data = df_fit, aes(x = x, y = y, color = color)) +
   geom_point(data = data_subset2, aes(x = x_rand, y = y, col = "grey")) + 
-  geom_point(data = data_subset1, aes(x = x_rand, y = y, color = "blue")) + 
-  geom_point(data = data_subset0, aes(x = x_rand, y = y, color = "red")) + 
-# geom_errorbar(data = df_fit, aes(x = x_rand, ymin = p10, ymax = p90, color = color), width=0) +
   geom_errorbar(data = data_subset2, aes(x = x_rand, ymin = p10, ymax = p90, color = "grey"), width=0) +
+  geom_point(data = data_subset1, aes(x = x_rand, y = y, color = "blue")) + 
   geom_errorbar(data = data_subset1, aes(x = x_rand, ymin = p10, ymax = p90, color = "blue"), width=0) +
+    geom_point(data = data_subset0, aes(x = x_rand, y = y, color = "red")) + 
+# geom_errorbar(data = df_fit, aes(x = x_rand, ymin = p10, ymax = p90, color = color), width=0) +
   geom_errorbar(data = data_subset0, aes(x = x_rand, ymin = p10, ymax = p90, color = "red"), width=0) +
   geom_polygon(data = df_polygon, aes(x = x, y = y), fill = "#feb24c") +
   geom_line(aes(x = x, y = mu_500)) +
@@ -919,6 +932,7 @@ plot_grid(p1, p2, labels = c("A", "B"), label_size = 26)
 
 The full analysis is not given here, as it is a repeat of the analysis above for 20 species, but with all size data included. 
 First get the data
+
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
 #rm(list = ls()) # clear memory
 
@@ -1023,38 +1037,134 @@ abline(lm(p50 ~ skew, data = bet1ci))
 
 ### TEMPORAL ###
 
-### SHANE PLEASE - Extended Data Table 2: long term SST trends
+### Extended Data Table 2: long term SST trends
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F, fig.width=10, fig.height=6}
-## calculate SST trends per long term location 
-load(file  = "inputs/meangeoSST.RData")
-load(file = "inputs/yearsPerLoc.RData")
+#Read in monthly SST data for nine long term locations
+df_data <- read_csv("inputs/CondensedTemps.csv") # read in 
 
-longtermLoc <- yearsPerLoc$Loc
-longtermGeogr <- yearsPerLoc$geogr
+df_data$Loc <- factor(df_data$Loc) # make location a factor
 
-sst_long <- meangeoSST %>% filter (geogroup %in% longtermGeogr) 
-sst_long$Loc <- yearsPerLoc$Loc[match(sst_long$geogroup, yearsPerLoc$geogr)]
+ggplot(df_data, aes(x = date_dec, y = meansst, color = Loc)) +
+  geom_point() +
+  facet_wrap( ~ Loc) +
+  guides(color = FALSE) +
+  labs(x = "Date (decimal)", y = "Sea-surface temperature (degrees Celsius)")
 
-TempTrendReg = matrix(NA, nrow = length(longtermLoc), ncol = 4)
+# Fit a single location
+Locs <- levels(df_data$Loc)
+Locs # show locations where data are available
+Loc_fitted <- 3 # the location fitted to the data (see list above)
 
-for (i in 1:length(longtermLoc)) {
+df_fit <- df_data %>%
+  filter(Loc == Locs[Loc_fitted]) # extract the location of interest
+
+stan_dat <- list(
+  N    = nrow(df_fit),           # number of temperature readings
+  dd   = df_fit$date_dec - 2018, # decimal date (since 2018)
+  msst = df_fit$meansst          # mean sea-surface temperature
+)
+
+# perform a Bayesian fit (not run now, but fits are saved)
+#fit <- stan(file = 'stan_models/SST_fit.stan', data = stan_dat, # output is supressed
+#  iter = 3000, warmup = 1000, chains = 3, seed = 66, thin = 20)
+#save(fit, file = "analysesOutputs/SST_fit.RData")
+
+load(file = "analysesOutputs/SST_fit.RData")
+model_params <- c("beta0", "beta1", "beta2", "phi", "sigma")
+
+# display the posterior distribution statistics
+print(fit, pars=model_params, probs=c(0.025,0.1,0.5,0.9,0.975), digits=4)
+
+#display traceplot to check convergence
+traceplot(fit, pars = model_params, inc_warmup = TRUE, ncol = 3)
+
+# show density distributions
+N_extract <- rstan::extract(fit, pars=model_params)
+
+df_prm_pdf <- reshape2::melt(N_extract, value.name="Parameter")
+
+# plot posterior distributions
+df_prm_pdf$L1 <- factor(df_prm_pdf$L1, 
+  levels = c("beta0", "beta1", "beta2", "phi", "sigma"))
+    
+title <- paste("Posterior probability distributions for ", Locs[Loc_fitted], sep = "")
+
+ggplot(data=df_prm_pdf, aes(x = Parameter)) + 
+  labs(title = title) +
+  geom_density(fill = "grey75") +
+  labs(
+    x    = "Value",
+    y    = "Probability density"
+  ) +
+  facet_wrap( ~ L1, scale = "free", ncol=3) +
+  theme_bw()
+
+
+# Is the fit adequate?
+REPS <- 10
+N <- length(N_extract$beta0)
+Rep <- sample(1:N, REPS)
+tm <- seq(from = 1980, to = 2019, by = 0.05)
+Nt <- length(tm)
+
+df_plot <- df_fit
+df_plot$decade = factor(10 *(df_plot$date_dec %/% 10))
+
+p_base <- ggplot(df_plot, aes(x = date_dec, y = meansst)) +
+  geom_point(color = "grey45") +
+  facet_wrap(~ decade, scale = "free_x") +
+  labs(x = "Year", y = "Mean monthly sea-surface temperature (C)") +
+  theme_bw()
+
+for (i in 1:REPS) {
+  beta0 <- N_extract$beta0[Rep[i]]
+  beta1 <- N_extract$beta1[Rep[i]]
+  beta2 <- N_extract$beta2[Rep[i]]
+  phi   <- N_extract$phi[Rep[i]]
+  mu <- beta0 + beta1 * (tm - 2018) + beta2 * cos(2*3.14159*((tm - 2018)-phi))
+
+  df_line <- tibble(
+    date_dec = tm,
+    meansst = mu
+  )  
+  df_line$decade = factor(10 *(df_line$date_dec %/% 10))
+
   
-oneloc <- sst_long %>% filter (Loc == longtermLoc[i])
-print(i)
-print(longtermLoc[i])
-
-tempTrend <- lm(annSST ~ year, data = oneloc)
-
-TempTrendReg[i,c(1:2)] <- round(tempTrend[[1]],4)
-TempTrendReg[i,3] <- round(anova(tempTrend)$'Pr(>F)'[1],4)
-TempTrendReg[i,4] <- longtermLoc[i]
-
+  p_base <- p_base + geom_line(data = df_line, aes(x = date_dec, y = meansst), color = "red")
 }
+
+p_base + labs(title = Locs[Loc_fitted])
+
+## Now fit for all locations
+
+df_beta1 <- tibble(
+  Loc = Locs, # 9 locations
+  Mean = 0    # this will be updated
+)
+
+for (Loc_fitted in 1:length(Locs)) {
+  df_fit <- df_data %>%
+    filter(Loc == Locs[Loc_fitted])
+
+  stan_dat <- list(
+    N    = nrow(df_fit),           # number of temperature readings
+    dd   = df_fit$date_dec - 2018, # decimal date (since 2018)
+    msst = df_fit$meansst          # mean sea-surface temperature
+  )
+
+  fit <- stan(file = 'stan_models/SST_fit.stan', data = stan_dat, 
+    iter = 3000, warmup = 1000, chains = 3, seed = 66, thin = 20, refresh = 0)
+  
+  # store the long-term rates of change
+  df_beta1$Mean[Loc_fitted] <- get_posterior_mean(fit)[2,4]
+}
+
+df_beta1 # show estimated annual rates of change in sst for 9 locations
 
 ```
 
-### Create data files 
+### Create temporal data files 
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
 
@@ -1113,7 +1223,16 @@ locnames$LocFig <- c("Port Phillip Bay", "Maria Island", "Port Davey", "Jervis B
 temporal_data$LocFig <- locnames$LocFig[match(temporal_data$Loc, locnames$Loc)]
 save(temporal_data, file = "inputs/temporal_fish_data.RData")
 
-## So file "temporal_data" is the main file used for the Bayesian analyses and only includes years and speices with sufficient data (105 species)
+#how many sites on average per each long-term location
+sitesPerLoc <- temporal_data %>% group_by(Loc) %>% summarise(n_sites = n_distinct(SiteCode))
+mean(sitesPerLoc$n_sites)
+
+#save coordinates of long term locations to be plotted in Extended data Fig1 (above)
+
+#longLoc <- temporal_data %>% group_by(Loc) %>% summarise (lat = mean(SiteLat), long = mean(SiteLong))
+#save(longLoc, file = "inputs/longLoc.RData")
+
+## So file "temporal_data" is the main file used for the Bayesian analyses and only includes years and species with sufficient data (105 species) in the 9 long-term locations
 #File VertData_temporal has all species and years for the 9 long-term locations (434 species)
 
 ```
@@ -1572,7 +1691,7 @@ colnames(AllParamsOut) <- correct_columns
 
 ```
 
-### Extended data Fig5: trends per location
+### Extended data Fig7: trends per location
 
 ```{r warning=FALSE, message=FALSE, eval=T, echo=FALSE, fig.width=10, fig.height=6}
 
@@ -1631,7 +1750,7 @@ knitr::kable(tempSummary, digits = 4)
 
 ```
 
-### Extended data Fig6: inside/outside MPA
+### Extended data Fig8: inside/outside MPA
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
 ###Outside MPA
@@ -1790,12 +1909,12 @@ ggplot(df_fit, aes(x = x, y = y)) +
  # xlim(-0.06,0.06) + ylim(-0.15,0.25) +
   theme_bw() +
 #  geom_text(x=-0.045, y=0.25, label="rho = 0.28, p = 0.005", size = 7, fontface = 3) + 
-  geom_text(x=-0.045, y=0.25, label= expression (paste(rho, " = 0.28, p = 0.005")), size = 7, fontface = 3) + 
+  geom_text(x=-0.057, y=0.25, label= expression (paste(rho, " = 0.28, p = 0.005")), size = 6, fontface = 3) + 
     theme(
     panel.border = element_blank(), panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),
-    axis.title.x = element_text(size=18),
-    axis.title.y = element_text(size=18),
+    axis.title.x = element_text(size=13),
+    axis.title.y = element_text(size=13),
     axis.text=element_text(size=12)) +
   #geom_smooth(method = "lm", se = FALSE, linetype = 4, color = "red") +
   # ggtitle("Comparing trends of body size in space and time") + 
@@ -1844,7 +1963,7 @@ aa=1
 SpeciesName <- Species[aa]
 SpeciesName
 
-img<-readJPEG("photos/AV.jpg")
+img<-readJPEG("photos/AV2.jpg")
 rast<-as.raster(img)
 
 ## Load the individual fitted data from temporal analyses: note this file is not available on github 
@@ -1916,8 +2035,8 @@ Fig3a <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 25, ymax=30) 
- + ggsave("Fig3a.png",width = 5, height = 5, dpi = 300)
+ # annotation_raster(rast, xmin = 2012, xmax = 2019, ymin = 25, ymax=30) +
+  ggsave("Fig3a.png",width = 5, height = 5, dpi = 300)
 
 
 ```
@@ -2002,7 +2121,7 @@ Fig3b <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 1, ymax=8) +
+ # annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 1, ymax=8) +
   ggsave("Fig3b.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2087,7 +2206,7 @@ Fig3c <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 1, ymax=8) +
+ # annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 1, ymax=8) +
   ggsave("Fig3c.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2172,7 +2291,7 @@ Fig3d <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 15, ymax=20) +
+ # annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 15, ymax=20) +
   ggsave("Fig3d.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2257,7 +2376,7 @@ Fig3e <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 2, ymax=20) +
+ # annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 2, ymax=20) +
   ggsave("Fig3e.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2342,7 +2461,7 @@ Fig3f <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 28, ymax=40) +
+#  annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 28, ymax=40) +
   ggsave("Fig3f.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2427,7 +2546,7 @@ Fig3g <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 14, ymax=20) +
+ # annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 14, ymax=20) +
   ggsave("Fig3g.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2512,7 +2631,7 @@ Fig3h <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 0, ymax=10) +
+ # annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 0, ymax=10) +
   ggsave("Fig3h.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2597,7 +2716,7 @@ Fig3i <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 0, ymax=10) +
+#  annotation_raster(rast, xmin = 2005, xmax = 2019, ymin = 0, ymax=10) +
   ggsave("Fig3i.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2673,7 +2792,7 @@ Fig3j <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
   geom_line(data= df_CI, aes(x = years, y = mu_500)) +
   geom_point(data = meanSizeSppF, aes(x = year, y = meanLen), shape = 21, fill = "grey", colour = "black", size=3) +
   geom_point(data = meanSizeSpp, aes(x = year, y = meanLen), size=3, color = "black") +
-  ylim(20, 45) +
+  ylim(0, 45) +
   xlim (1992,2018) +
   ggtitle(SpeciesName) +
   theme_classic() +
@@ -2682,7 +2801,7 @@ Fig3j <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 20, ymax=27) +
+#  annotation_raster(rast, xmin = 2008, xmax = 2019, ymin = 20, ymax=27) +
   ggsave("Fig3j.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2767,7 +2886,7 @@ Fig3k <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 1992, xmax = 2003, ymin = 10, ymax=15) +
+ # annotation_raster(rast, xmin = 1992, xmax = 2003, ymin = 10, ymax=15) +
   ggsave("Fig3k.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2843,7 +2962,7 @@ Fig3l <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
   geom_line(data= df_CI, aes(x = years, y = mu_500)) +
   geom_point(data = meanSizeSppF, aes(x = year, y = meanLen), shape = 21, fill = "grey", colour = "black", size=3) +
   geom_point(data = meanSizeSpp, aes(x = year, y = meanLen), size=3, color = "black") +
-  ylim(10, 30) +
+  ylim(0, 30) +
   xlim (1992,2018) +
   ggtitle(SpeciesName) +
   theme_classic() +
@@ -2852,7 +2971,7 @@ Fig3l <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 23, ymax=30) +
+#  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 23, ymax=30) +
   ggsave("Fig3l.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -2937,7 +3056,7 @@ Fig3m <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 18, ymax = 25) +
+#  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 18, ymax = 25) +
   ggsave("Fig3m.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -3022,7 +3141,7 @@ Fig3n <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 15, ymax = 20) +
+#  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 15, ymax = 20) +
   ggsave("Fig3n.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -3107,7 +3226,7 @@ Fig3o <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 9.5, ymax = 13) +
+ # annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 9.5, ymax = 13) +
   ggsave("Fig3o.png",width = 5, height = 5, dpi = 300)
   
 ```
@@ -3188,65 +3307,46 @@ Fig3p <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
   ggtitle(SpeciesName) +
   theme_classic() +
   theme(axis.title.x=element_blank(),
-        axis.text.x=element_blank(),
+     #   axis.text.x=element_blank(),
         axis.title.y=element_blank(),
         axis.text=element_text(size=14),
         plot.title=element_text(face='bold', size=16, hjust=0.5, vjust=0.5)) +
-  annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 0, ymax = 12) +
+ # annotation_raster(rast, xmin = 2006, xmax = 2019, ymin = 0, ymax = 12) +
   ggsave("Fig3p.png",width = 5, height = 5, dpi = 300)
   
 ```
 
-###final plot
+##END
 
-```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
-load(file= "meanSizes.RData") #mean annual body size for 24 species at Maria
-load(file = "estimatedTrends.RData") #estimated temporal trends, beta0 is the intercept and betaloc is the slope, sigma shows all three error terms
 
-for (aa in 1:length(unique(maria_means$TAXONOMIC_NAME))) {
+### old temp trend
 
-SpeciesName <- mariaSpp[aa]
- print(SpeciesName)
- print(aa)
- 
- #data for one species
- df_fit <- maria_means %>% filter(TAXONOMIC_NAME == SpeciesName)
- df_trend <- mariaTrend %>% filter(species == as.character(SpeciesName))
+```{r, warning=FALSE, message=FALSE, echo = F, eval = F, fig.width=10, fig.height=6}
+## calculate SST trends per long term location 
+load(file = "inputs/meangeoSST.RData")
+load(file = "inputs/yearsPerLoc.RData")
 
-    ggplot(df_fit, aes(x = year, y = meanLogSize)) +
-    geom_point(color = "grey80", size = 1.5) + # observed data
-    geom_point(data = df_fit, aes(x = year, y = meanLogSize, size = ln10ofn), color = "dark red") +
-    #geom_abline(intercept = 3.5, slope = -0.0048, size = 0.6) + 
-    #geom_abline(intercept = as.numeric(df_trend$betazero50), slope = as.numeric(df_trend$betaloc50), color = "orange", size = 0.6) +
-    ylim(0.5, 4.5) +
-    facet_grid(~TAXONOMIC_NAME, scales = "free_y") + 
-    labs(size = "Counts\n(log10)", x = "Year", y = "log Size (cm)") +
-    theme_bw()+
-    theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size = 6))
- 
+longtermLoc <- yearsPerLoc$Loc
+longtermGeogr <- yearsPerLoc$geogr
+
+sst_long <- meangeoSST %>% filter (geogroup %in% longtermGeogr) 
+sst_long$Loc <- yearsPerLoc$Loc[match(sst_long$geogroup, yearsPerLoc$geogr)]
+
+TempTrendReg = matrix(NA, nrow = length(longtermLoc), ncol = 4)
+
+for (i in 1:length(longtermLoc)) {
+  
+oneloc <- sst_long %>% filter (Loc == longtermLoc[i])
+print(i)
+print(longtermLoc[i])
+
+tempTrend <- lm(annSST ~ year, data = oneloc)
+
+TempTrendReg[i,c(1:2)] <- round(tempTrend[[1]],4)
+TempTrendReg[i,3] <- round(anova(tempTrend)$'Pr(>F)'[1],4)
+TempTrendReg[i,4] <- longtermLoc[i]
+
 }
- 
-    ggplot(maria_means, aes(x = year, y = meanLogSize)) +
-    geom_point(color = "grey80", size = 1.5) + # observed data
-    geom_point(data = maria_means, aes(x = year, y = meanLogSize, size = ln10ofn), color = "dark red") +
-    #geom_abline(intercept = 3.5, slope = -0.04, size = 0.6) + 
-    geom_abline(intercept = betazero50, slope = betaloc50, color = "orange", size = 0.6) +
-    ylim(0.5, 4.5) +
-    facet_grid(~TAXONOMIC_NAME, scales = "free_y") + 
-    labs(size = "Counts\n(log10)", x = "Year", y = "log Size (cm)") +
-    theme_bw()+
-    theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size = 6))
-
-
-    
-    ggplot(df_summary, aes(x = Size, y = n, group = TAXONOMIC_NAME)) +
-  geom_point() + geom_line() +
-  facet_wrap( ~ TAXONOMIC_NAME, scale = "free_y") +
-  labs(x = "Size (cm)", y = "Abundance") +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size = 6))
 
 ```
 
-
-##END
