@@ -1134,14 +1134,18 @@ p_base + labs(title = Locs[Loc_fitted])
 
 ## Now fit for all locations
 
+#create a datafile to store results
 df_beta1 <- tibble(
   Loc = Locs, # 9 locations
-  Mean = 0    # this will be updated
+  Mean = 0,    # this will be updated
+  q10 = 0,
+  q90 = 0
+  
 )
 
+#run bayesian fits for all locations
 for (Loc_fitted in 1:length(Locs)) {
-  df_fit <- df_data %>%
-    filter(Loc == Locs[Loc_fitted])
+  df_fit <- df_data %>% filter(Loc == Locs[Loc_fitted])
 
   stan_dat <- list(
     N    = nrow(df_fit),           # number of temperature readings
@@ -1154,9 +1158,19 @@ for (Loc_fitted in 1:length(Locs)) {
   
   # store the long-term rates of change
   df_beta1$Mean[Loc_fitted] <- get_posterior_mean(fit)[2,4]
+  df_beta1$q10[Loc_fitted] <- quantile(extract(fit, pars = "beta1")[[1]], probs = c(0.1))
+  df_beta1$q90[Loc_fitted] <- quantile(extract(fit, pars = "beta1")[[1]], probs = c(0.9))
 }
 
+
 df_beta1 # show estimated annual rates of change in sst for 9 locations
+#It turns out Maria is saved as a factor and not character and does not match exact name (it needs a space at the end). So I rewrite it
+df_beta1$Loc[5] <- as.character("Maria ")
+df_beta1$Loc <- as.character(df_beta1$Loc)
+
+#SSTtrendFit <- df_beta1
+#save(SSTtrendFit, file = "analysesOutputs/SSTtrend_fits.RData")
+
 
 ```
 
@@ -1689,18 +1703,17 @@ colnames(AllParamsOut) <- correct_columns
 
 ### Extended data Fig7: trends per location
 
-###TODO### fix temptrend
-
 ```{r warning=FALSE, message=FALSE, eval=T, echo=FALSE, fig.width=10, fig.height=6}
 
 load(file = "analysesOutputs/BayesTempPool_105spp.RData") 
+load(file = "analysesOutputs/SSTtrend_fits.RData")
 
 ##Add full location names for figures
 locnames <- list(NA)
 locnames$Loc <- unique(AllParams$locs)
 locnames$LocFig <- c("Port Phillip Bay", "Bass Strait", "Bicheno", "Jervis Bay", "Maria Island", "Tinderbox","Jurien Bay",  "Ninepin","Port Davey")
-
-locnames$trend <- c(0.023, 0.0167, 0.026, 0.036, 0.0276, 0.0269, 0.0047, 0.0267, 0.0237) #annual temp trend estimated above
+#Add estimated temperature trend (median)
+locnames$trend <- SSTtrendFit$Mean[match(locnames$Loc, SSTtrendFit$Loc)]
 
 AllParams$LocFig <- locnames$LocFig[match(AllParams$locs, locnames$Loc)]
 AllParams$TempTrend <- locnames$trend[match(AllParams$locs, locnames$Loc)] 
