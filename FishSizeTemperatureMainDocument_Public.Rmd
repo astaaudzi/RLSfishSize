@@ -10,12 +10,9 @@ output:
   pdf_document:
     toc:yes
 ---
-### to do
-1. change map shapefile 
-
 ### Load libraries
 
-```{r warning=FALSE, message=FALSE, warning=FALSE, echo=FALSE}
+```{r warning=FALSE, message=FALSE, echo=FALSE, eval= T}
 
 rm(list = ls()) # clear memory
 
@@ -90,6 +87,14 @@ rgdal::readOGR(dsn = ".", "aust_cd66states") %>%
   geom_path(aes(x = long, y = lat, group = group), color = 'darkgrey', size = .3) +
   geom_point(aes(x = rls_aus_geo$long, y = rls_aus_geo$latt), data = rls_aus_geo, size = (rls_aus_geo$species/30), color = rls_aus_geo$color) + 
   geom_point(aes(x = longLoc$long, y = longLoc$lat), data = longLoc, shape = 8, size = 2, color = "black") +
+  geom_text(x=111.5, y=-30, label= "Jurien Bay", size = 4, fontface = 3) + 
+  geom_text(x=154, y=-35, label= "Jervis Bay", size = 4, fontface = 3) + 
+  geom_text(x=144, y=-37, label= "Port Phillip Bay", size = 4, fontface = 3) + 
+  geom_text(x=151, y=-39, label= "Bass Strait", size = 4, fontface = 3) + 
+  geom_text(x=151, y=-41.5, label= "Bicheno", size = 4, fontface = 3) + 
+  geom_text(x=152, y=-42.8, label= "Maria Island", size = 4, fontface = 3) + 
+  geom_text(x=152.7, y=-44, label= "Ninepin & Tinderbox", size = 4, fontface = 3) + 
+  geom_text(x=142.5, y=-43, label= "Port Davey", size = 4, fontface = 3) + 
   ggtitle("Mean annual SST of each geographic cell (12 to 29)") + 
   xlab("Longitutde") + ylab("Latitude")
 
@@ -150,7 +155,7 @@ ggplot(df_summary, aes(x = Size, y = n, group = TAXONOMIC_NAME)) +
 
 ```
 
-### Extended Data Fig.4: Plot size-temperature distributions in space
+### Extended Data Fig.3: Plot size-temperature distributions in space
 
 Two example plots are provided in the manuscript electronic supplement. Plots for all species are available on https://github.com/astaaudzi/RLSfishSize/tree/master/AllSizePlots
 
@@ -438,7 +443,7 @@ model {
 
 ```
 
-### Extended data Fig.3: Spatial postanalyses processing: traceplots
+### Spatial postanalyses processing: traceplots
 this code was used to assess convergence; individual species traceplots are not provided here, but can be reproduced using the chunks above and this code
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
@@ -924,7 +929,7 @@ plot_grid(p1, p2, labels = c("A", "B"), label_size = 26)
 
 ```
 
-### Extended Data Fig 9: testing if exclusion of juveniles might affect Fi1B results
+### Extended Data Fig 7: testing if exclusion of juveniles might affect Fi1B results
 
 The full analysis is not given here, as it is a repeat of the analysis above for 20 species, but with all size data included. 
 First get the data
@@ -1006,7 +1011,7 @@ beta0 -0.00484 0.00007 0.00197 -0.00868 -0.00479 -0.00117   826 1.00231
 beta1  0.01948 0.00011 0.00334  0.01330  0.01937  0.02585   973 0.99698
 sigma  0.02811 0.00007 0.00180  0.02477  0.02811  0.03161   757 1.00706
 
-### Extended Data Fig. 5: correlation to abundance skew
+### Extended Data Fig. 4: correlation to abundance skew
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
 #slopes 
@@ -1025,7 +1030,7 @@ cor.test(bet1ci$skew, bet1ci$p50)
 
 # Plot
 par(mfrow = c(1,1), mar = c(5,5,3,2))
-plot(bet1ci$skew, bet1ci$p50, pch=19, ylab = "b1 value from spatial size-SST slopes (this study)", xlab = "skew of abundannce vs midpoint temperature (Waldock et al 2019)", main = "Correlation between size-temp and abund-temp trends")
+plot(bet1ci$skew, bet1ci$p50, pch=19, ylab = "Size - SST slope (b1) from spatial analyis (this study)", xlab = "Species abundance - SST skew from Waldock et al (2019)")
 abline(lm(p50 ~ skew, data = bet1ci))
 
 
@@ -1247,7 +1252,7 @@ mean(sitesPerLoc$n_sites)
 
 ```
 
-### Extended Data Fig6: sizes through time 
+### Plot raw sizes through time 
 
 Temporal size plots for all species can be found at https://github.com/astaaudzi/RLSfishSize/SizePlotsTemporal
 
@@ -1701,7 +1706,7 @@ colnames(AllParamsOut) <- correct_columns
 
 ```
 
-### Extended data Fig7: trends per location
+### Extended data Fig5: trends per location
 
 ```{r warning=FALSE, message=FALSE, eval=T, echo=FALSE, fig.width=10, fig.height=6}
 
@@ -1761,7 +1766,7 @@ knitr::kable(tempSummary, digits = 4)
 
 ```
 
-### Extended data Fig8: inside/outside MPA
+### Extended data Fig. 6: inside/outside MPA
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
 ###Outside MPA
@@ -3328,36 +3333,3 @@ Fig3p <-  ggplot(meanSizeSpp, aes(year, meanSize)) +
 ```
 
 ##END
-
-
-### old temp trend
-
-```{r, warning=FALSE, message=FALSE, echo = F, eval = F, fig.width=10, fig.height=6}
-## calculate SST trends per long term location 
-load(file = "inputs/meangeoSST.RData")
-load(file = "inputs/yearsPerLoc.RData")
-
-longtermLoc <- yearsPerLoc$Loc
-longtermGeogr <- yearsPerLoc$geogr
-
-sst_long <- meangeoSST %>% filter (geogroup %in% longtermGeogr) 
-sst_long$Loc <- yearsPerLoc$Loc[match(sst_long$geogroup, yearsPerLoc$geogr)]
-
-TempTrendReg = matrix(NA, nrow = length(longtermLoc), ncol = 4)
-
-for (i in 1:length(longtermLoc)) {
-  
-oneloc <- sst_long %>% filter (Loc == longtermLoc[i])
-print(i)
-print(longtermLoc[i])
-
-tempTrend <- lm(annSST ~ year, data = oneloc)
-
-TempTrendReg[i,c(1:2)] <- round(tempTrend[[1]],4)
-TempTrendReg[i,3] <- round(anova(tempTrend)$'Pr(>F)'[1],4)
-TempTrendReg[i,4] <- longtermLoc[i]
-
-}
-
-```
-
