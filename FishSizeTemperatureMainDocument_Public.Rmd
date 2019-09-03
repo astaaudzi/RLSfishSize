@@ -1175,7 +1175,14 @@ df_beta1$Loc <- as.character(df_beta1$Loc)
 
 #SSTtrendFit <- df_beta1
 #save(SSTtrendFit, file = "analysesOutputs/SSTtrend_fits.RData")
+```
 
+### Table of long-term SST trends
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
+load(file = "analysesOutputs/SSTtrend_fits.RData")
+
+knitr::kable(SSTtrendFit)
 
 ```
 
