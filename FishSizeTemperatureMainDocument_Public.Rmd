@@ -12,6 +12,7 @@ output:
 ---
 
 This document is an electronic supplement to the NEE submission NATECOLEVOL-19108348-T. The document contains unpublished code and data. Please use it only for review purposes. 
+To run the code make sure all the libraries listed in the first chunk are installed 
 
 
 ### Load libraries
@@ -30,6 +31,7 @@ library(reshape)
 library(lmodel2)
 library(cowplot)
 library(weights)
+library(rgdal)
 
 ```
 
