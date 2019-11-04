@@ -1,5 +1,5 @@
 ---
-title: "Relationshop between temperature and the average observed body size of a species"
+title: "Changes in fish body sizes relate to temperature, but not all species shrink with warming"
 author: "Asta Audzijonyte, Shane Richards, Julia Blanchard et al."
 date: "22 March 2018"
 output: 
@@ -10,6 +10,10 @@ output:
   pdf_document:
     toc:yes
 ---
+
+This document is an electronic supplement to the NEE submission NATECOLEVOL-19108348-T. The document contains unpublished code and data. Please use it only for review purposes. 
+
+
 ### Load libraries
 
 ```{r warning=FALSE, message=FALSE, echo=FALSE, eval= T}
