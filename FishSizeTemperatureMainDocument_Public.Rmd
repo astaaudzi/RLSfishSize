@@ -1882,6 +1882,53 @@ save(TempSpaceCombined, file = "analysesOutputs/TempSpaceCombined.RData")
 
 ```
 
+### Space-time rate comparison
+
+From the Methods section: "Because μ_i is the log transformed body length, the estimated values of β_1 are converted to relative (or %) change in body length as exp(β1), where β1 of e.g. -0.02 corresponds to exp(-0.02) = 0.98 or 2% decrease in body length. Thus β1 values ranging from -0.2 to 0.2 can be interpreted as proportional change in body length" 
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
+load(file = "analysesOutputs/TempSpaceCombined.RData")
+
+#include only species that have both temporal and spatial analyses
+st <- na.omit(TempSpaceCombined) 
+#how many species with both temporal and spatial data?
+length(unique(st$species)) #71 species
+
+##Summaries for spatial analyses
+
+#How many are increasing in spatial analyses at all?
+length(unique(st$p50[which(st$p50 > 0)])) #30 spp
+#How many of them are increasing "signficantly" in spatial analyses (80%PPD above 0)?
+length(unique(st$p50[which(st$p10 > 0)])) #19 spp
+#how much increase per 1C of warming?
+(median(st$p50[which(st$p10 > 0)]))*100 ## 3.5%
+
+#How many are decreasing in spatial analyses at all? 
+length(unique(st$p50[which(st$p50 < 0)])) #41 spp
+#How many are decreasing "signficantly" in spatial analyses (80% PPD below 0)?
+length(unique(st$p50[which(st$p90 < 0)])) #31 spp
+#How much decrease in length per 1C of warming? 
+(median(st$p50[which(st$p90 < 0)]))*100 ## -3.4%
+
+## Summaries for temporal analyses 
+
+#How many are increasing in temporal analyses at all?
+length(which(st$Time_betaloc50 > 0)) #54
+#How many are increasing "significanlty" (80% PPD above 0)
+length(which(st$Time_betaloc10 > 0)) #25
+#What is the average change per year for these "significant species"?
+(median(st$Time_betaloc50[which(st$Time_betaloc10 > 0)]))*100 ## 1.5%
+
+#How many are decreasing in temporal analyses at all?
+length(which(st$Time_betaloc50 < 0)) #95
+#How many are decreasing "significanlty" (80% PPD below 0)
+length(which(st$Time_betaloc90 < 0)) #39
+#What is the average change per year for these "significant species"?
+(median(st$Time_betaloc50[which(st$Time_betaloc90 < 0)]))*100 ## -0.9%
+
+
+```
+
 ### Fig2 data and plots
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
