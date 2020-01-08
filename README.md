@@ -1,5 +1,5 @@
 # RLSfishSize
-size through time 
+fish size - SST relation through space and time 
 
 Code and datafile to replicate fish body size - SST analyses around the Australian continent. 
 
