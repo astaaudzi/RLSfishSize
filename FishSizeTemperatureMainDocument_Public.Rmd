@@ -935,6 +935,53 @@ plot_grid(p1, p2, labels = c("A", "B"), label_size = 26)
 
 ```
 
+### Extended Data Table 2: statistics
+
+```{r, warning=F}
+load(file = "analysesOutputs/slopesInSpace335spp.RData")
+
+length(which(bet1ci$p50 < 0)) # 189 have negative slopes 
+length(which(bet1ci$p50 > 0)) # 146 have positive slopes (larger where warmer)
+
+length(which(bet1ci$p90 < 0)) # 97 species have negative significant responses 
+length(which(bet1ci$p10 > 0)) # 64 have significant positive responses 
+
+increasing <- bet1ci[which(bet1ci$p10 > 0),]
+decreasing <- bet1ci[which(bet1ci$p90 < 0),]
+
+tempSpace <- bet1ci %>% filter (midpoint <= 23) #temperate species
+tropSpace <- bet1ci %>% filter (midpoint > 23) #tropical species
+
+## analysis for temperate and tropical separately
+
+### temperate
+length(which(tempSpace$p10 > 0)) #33
+length(which(tempSpace$p90 < 0)) #35
+# proportion from significantly changing species (68 in total)
+length(which(tempSpace$p10 > 0))/68
+length(which(tempSpace$p90 < 0)) / 68
+
+#proportion from all temporal 
+length(which(tempSpace$p50 > 0)) #57
+length(which(tempSpace$p50 > 0))/length(tempSpace$species) #0.49
+length(which(tempSpace$p50 < 0)) #59
+length(which(tempSpace$p50 < 0))/length(tempSpace$species) #0.51
+
+### tropical
+length(which(tropSpace$p10 > 0)) #31
+length(which(tropSpace$p90 < 0)) #62
+# proportion from significantly changing species (93 in total)
+length(which(tropSpace$p10 > 0))/(31+62)
+length(which(tropSpace$p90 < 0)) / (31+62)
+
+#proportion from all temporal 
+length(which(tropSpace$p50 > 0)) #88
+length(which(tropSpace$p50 > 0))/length(tropSpace$species) #0.40
+length(which(tropSpace$p50 < 0)) #130
+length(which(tropSpace$p50 < 0))/length(tropSpace$species) #0.60
+
+```
+
 ### Extended Data Fig 7: testing if exclusion of juveniles might affect Fi1B results
 
 The full analysis is not given here, as it is a repeat of the analysis above for 20 species, but with all size data included. 
@@ -1857,6 +1904,59 @@ knitr::kable(temp_slopes_to_print, digits = 4)
 
 ```
 
+### Extended Data Table 2: temporal statistics 
+
+```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
+#rm(list = ls())
+load(file = "analysesOutputs/BayesTempPool_105spp.RData") 
+notwarming = c("Jurien")
+
+#only get trends in warming locations
+AllParamsPool <-AllParams %>% filter ((!locs %in% notwarming))
+
+AllParamsPool <- AllParamsPool %>% select(species, locs, betaloc025, betaloc10, betaloc50, betaloc90, betaloc975, betazero025, betazero10, betazero50, betazero90, betazero975) 
+
+length(unique(AllParamsPool$species)) ## 77 spp
+
+#How many species are increasing in temporal analyses at all?
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc50 > 0)])) #34
+#How many are increasing "significanlty" (80% PPD above 0)
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc10 > 0)])) #19
+
+incrSppTime <- unique(AllParamsPool$species[which(AllParamsPool$betaloc10 > 0)])
+
+#How many are decreasing in temporal analyses at all?
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc50 < 0)])) #58
+#How many are increasing "significanlty" (80% PPD above 0)
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc90 < 0)])) #25
+
+decrSppTime <- unique(AllParamsPool$species[which(AllParamsPool$betaloc90 < 0)])
+
+#which species can show both clear increase and clear decrease trends at different locations
+incrSppTime[which(incrSppTime %in% decrSppTime)]
+decrSppTime[which(decrSppTime %in% incrSppTime)]
+
+## So we have a total of 19+25-4= 40 species that show clear size trends
+
+## For Table S2 get statistics per species x location combinations
+
+#How many speciesxlocations are increasing in temporal analyses at all?
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 > 0)]) #56
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 > 0)])/length(AllParamsPool$species) #0.36
+#how many are decreasing 
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 < 0)]) #100
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 < 0)])/length(AllParamsPool$species) #0.64
+
+#How many are increasing "significanlty" (80% PPD above 0)
+length(AllParamsPool$species[which(AllParamsPool$betaloc10 > 0)]) #25
+length(AllParamsPool$species[which(AllParamsPool$betaloc90 < 0)]) #41
+#get proportions
+25 / (25+41)
+41 / (25+41)
+
+
+```
+
 ### Combine temporal and spatial slopes
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
@@ -1865,9 +1965,47 @@ knitr::kable(temp_slopes_to_print, digits = 4)
 load(file = "analysesOutputs/BayesTempPool_105spp.RData") 
 notwarming = c("Jurien")
 
+#only get trends in warming locations
 AllParamsPool <-AllParams %>% filter ((!locs %in% notwarming))
 
 AllParamsPool <- AllParamsPool %>% select(species, locs, betaloc025, betaloc10, betaloc50, betaloc90, betaloc975, betazero025, betazero10, betazero50, betazero90, betazero975) 
+
+length(unique(AllParamsPool$species)) ## 77 spp
+
+#How many species are increasing in temporal analyses at all?
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc50 > 0)])) #34
+#How many are increasing "significanlty" (80% PPD above 0)
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc10 > 0)])) #19
+
+incrSppTime <- unique(AllParamsPool$species[which(AllParamsPool$betaloc10 > 0)])
+
+#How many speciesxlocations are increasing in temporal analyses at all?
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 > 0)]) #56
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 > 0)])/length(AllParamsPool$species) #0.36
+#how many are decreasing 
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 < 0)]) #100
+length(AllParamsPool$species[which(AllParamsPool$betaloc50 < 0)])/length(AllParamsPool$species) #0.64
+
+
+#How many are increasing "significanlty" (80% PPD above 0)
+length(AllParamsPool$species[which(AllParamsPool$betaloc10 > 0)]) #25
+length(AllParamsPool$species[which(AllParamsPool$betaloc90 < 0)]) #41
+
+25 / (25+41)
+41 / (25+41)
+
+#How many are decreasing in temporal analyses at all?
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc50 < 0)])) #58
+#How many are increasing "significanlty" (80% PPD above 0)
+length(unique(AllParamsPool$species[which(AllParamsPool$betaloc90 < 0)])) #25
+
+decrSppTime <- unique(AllParamsPool$species[which(AllParamsPool$betaloc90 < 0)])
+
+#which species can show both clear increase and clear decrease trends at different locations
+incrSppTime[which(incrSppTime %in% decrSppTime)]
+decrSppTime[which(decrSppTime %in% incrSppTime)]
+
+## So we have a total of 19+25-4= 40 species that show clear size trends
 
 column <- paste("Time_", colnames(AllParamsPool[3:12]),sep = "")
 column <- c("species", "locs", column)
@@ -1888,16 +2026,48 @@ From the Methods section: "Because μ_i is the log transformed body length, the 
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
 load(file = "analysesOutputs/TempSpaceCombined.RData")
+length(unique(TempSpaceCombined$species))
 
 #include only species that have both temporal and spatial analyses
 st <- na.omit(TempSpaceCombined) 
 #how many species with both temporal and spatial data?
 length(unique(st$species)) #71 species
 
-##Summaries for spatial analyses
+## Summaries for temporal analyses 
 
-#How many are increasing in spatial analyses at all?
+#How many are increasing in temporal analyses at all?
+length(unique(st$species[which(st$Time_betaloc50 > 0)])) #32
+#How many are increasing "significanlty" (80% PPD above 0)
+length(unique(st$species[which(st$Time_betaloc10 > 0)])) #19
+#What is the average change per year for these "significant species"?
+(median(st$Time_betaloc50[which(st$Time_betaloc10 > 0)]))*100 ## 1.5%
+
+incrSpp <- unique(st$species[which(st$Time_betaloc10 > 0)])
+
+#How many are decreasing in temporal analyses at all?
+length(unique(st$species[which(st$Time_betaloc50 < 0)])) #53
+#How many are decreasing "significanlty" (80% PPD below 0)
+length(unique(st$species[which(st$Time_betaloc90 < 0)])) #23
+#What is the average change per year for these "significant species"?
+(median(st$Time_betaloc50[which(st$Time_betaloc90 < 0)]))*100 ## -0.9%
+
+decrSpp <- unique(st$species[which(st$Time_betaloc90 < 0)])
+
+tempChangeSpp <- unique(c(incrSpp, decrSpp))
+
+##Summaries for spatial analyses for only those species that show clear body size changes in temporal analyses 
+
+spp38 <- st %>% filter(species %in% tempChangeSpp)
+
+#how much increase per 1C of warming?
+(median(spp38$p50[which(spp38$p10 > 0)]))*100 ## 4.5%
+(median(spp38$p50[which(spp38$p90 < 0)]))*100 ## 3.4%
+
+##Summaries for spatial analyses for only those species that are present temporal analyses 
+
+#How many are increasing in spatial analyses at all? 
 length(unique(st$p50[which(st$p50 > 0)])) #30 spp
+(median(st$p50[which(st$p50 > 0)]))*100 ## 3.5%
 #How many of them are increasing "signficantly" in spatial analyses (80%PPD above 0)?
 length(unique(st$p50[which(st$p10 > 0)])) #19 spp
 #how much increase per 1C of warming?
@@ -1910,21 +2080,7 @@ length(unique(st$p50[which(st$p90 < 0)])) #31 spp
 #How much decrease in length per 1C of warming? 
 (median(st$p50[which(st$p90 < 0)]))*100 ## -3.4%
 
-## Summaries for temporal analyses 
 
-#How many are increasing in temporal analyses at all?
-length(which(st$Time_betaloc50 > 0)) #54
-#How many are increasing "significanlty" (80% PPD above 0)
-length(which(st$Time_betaloc10 > 0)) #25
-#What is the average change per year for these "significant species"?
-(median(st$Time_betaloc50[which(st$Time_betaloc10 > 0)]))*100 ## 1.5%
-
-#How many are decreasing in temporal analyses at all?
-length(which(st$Time_betaloc50 < 0)) #95
-#How many are decreasing "significanlty" (80% PPD below 0)
-length(which(st$Time_betaloc90 < 0)) #39
-#What is the average change per year for these "significant species"?
-(median(st$Time_betaloc50[which(st$Time_betaloc90 < 0)]))*100 ## -0.9%
 
 
 ```
