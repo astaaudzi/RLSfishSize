@@ -40,7 +40,7 @@ library(rgdal)
 ```{r warning=FALSE, message=FALSE, eval=T, echo=FALSE}
 
 #Main datafile of fish sizes after removing outliers and rare species (335 species in the dataset)
-load(file = "inputs/fish_data.RData") #the data file is called fish_temp
+load(file = "inputs/fish_data.RData") #the data file is called main_data
 #check that we have 335 species 
 length(unique(main_data$TAXONOMIC_NAME))
 
@@ -85,6 +85,16 @@ rls_aus_geo$color <- colvector$col[match(rls_aus_geo$tempF, colvector$tempF)]
 
 #load long term location coordinates
 load(file = "inputs/longLoc.RData")
+## Or the location names and coordinates are also given here 
+#1 BassSt	-39.44452	147.2600
+#2	Bichen	-41.87929	148.3118
+#3	Jervis	-35.08387	150.7708
+#4	Jurien	-30.38433	115.0224
+#5	Maria 	-42.58866	148.0122
+#6	Ninepi	-43.28544	147.1565
+#7	Port D	-43.32945	145.9253
+#8	Port P	-38.24981	144.7030
+#9	Tinder	-43.06525	147.3322
 
 #Plot sites on a shapefile
 rgdal::readOGR(dsn = ".", "aust_cd66states") %>% 
@@ -128,7 +138,7 @@ save(meangeoSST, file = "inputs/meangeoSST.RData")
 
 ```
 
-### Extended Data Fig.2: are species distributed lognormally? Mostly
+### Supplementary Figure 4: are species distributed lognormally? Mostly
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
 #rename the data frame 
@@ -161,7 +171,7 @@ ggplot(df_summary, aes(x = Size, y = n, group = TAXONOMIC_NAME)) +
 
 ```
 
-### Extended Data Fig.3: Plot size-temperature distributions in space
+### Supplementary Figure 2: Plot size-temperature distributions in space
 
 Two example plots are provided in the manuscript electronic supplement. Plots for all species are available on https://github.com/astaaudzi/RLSfishSize/tree/master/AllSizePlots
 
@@ -593,7 +603,7 @@ save(bet1ci, file = "analysesOutputs/slopesInSpace335spp.RData")
 
 ```
 
-### Extended Data Table1: print spatial slopes
+### Supplementary Table1: print spatial slopes
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T}
 load(file = "analysesOutputs/slopesInSpace335spp.RData")
@@ -935,7 +945,7 @@ plot_grid(p1, p2, labels = c("A", "B"), label_size = 26)
 
 ```
 
-### Extended Data Table 2: statistics
+### Supplementary Table 2: spatial statistics
 
 ```{r, warning=F}
 load(file = "analysesOutputs/slopesInSpace335spp.RData")
@@ -982,7 +992,7 @@ length(which(tropSpace$p50 < 0))/length(tropSpace$species) #0.60
 
 ```
 
-### Extended Data Fig 7: testing if exclusion of juveniles might affect Fi1B results
+### Supplementary Figure 3: testing if exclusion of juveniles might affect Fi1B results
 
 The full analysis is not given here, as it is a repeat of the analysis above for 20 species, but with all size data included. 
 First get the data
@@ -1064,7 +1074,7 @@ beta0 -0.00484 0.00007 0.00197 -0.00868 -0.00479 -0.00117   826 1.00231
 beta1  0.01948 0.00011 0.00334  0.01330  0.01937  0.02585   973 0.99698
 sigma  0.02811 0.00007 0.00180  0.02477  0.02811  0.03161   757 1.00706
 
-### Extended Data Fig. 4: correlation to abundance skew
+### Extended Data Fig. 2: correlation to abundance skew
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
 #slopes 
@@ -1083,15 +1093,15 @@ cor.test(bet1ci$skew, bet1ci$p50)
 
 # Plot
 par(mfrow = c(1,1), mar = c(5,5,3,2))
-plot(bet1ci$skew, bet1ci$p50, pch=19, ylab = "Size - SST slope (b1) from spatial analyis (this study)", xlab = "Species abundance - SST skew from Waldock et al (2019)")
-abline(lm(p50 ~ skew, data = bet1ci))
+plot(bet1ci$skew, bet1ci$p50, pch=19, cex = 1, ylab = "Slope of body size - SST correlation", xlab = "Slope of species abundance - SST correlation", bty = "l", cex.lab = 1.5)
+abline(lm(p50 ~ skew, data = bet1ci), lwd =2, col = "red")
 
 
 ```
 
 ### TEMPORAL ###
 
-### Extended Data Table 2: long term SST trends
+### Supplementary Table 3: SST trends in locations
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F, fig.width=10, fig.height=6}
 #Read in monthly SST data for nine long term locations
@@ -1243,7 +1253,7 @@ knitr::kable(SSTtrendFit)
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
 
-## Temporal data set with likley erroneous records and lower 10% filtered out and only for the 9 locations with long-term data available 
+## Temporal data set with likely erroneous records and lower 10% filtered out and only for the 9 locations with long-term data available 
 #THis was used to filter onl long-term locations
 #yearsPerLoc <- VertData %>% filter (!Loc %in% badlocs) %>% group_by(Loc) %>% summarise (miny = min(year), maxy = max(year), timespan = maxy - miny, LocationFirst = first(Location), LocationLast = last(Location), lattmean = mean(SiteLat), lattsd = sd(SiteLat), longmean = mean(SiteLong), longsd = sd(SiteLong), counts = n(), spp = n_distinct(TAXONOMIC_NAME), years = n_distinct(year), geogr = first(geogroup)) %>% filter (timespan > 14) %>% filter (years > 10)
 
@@ -1766,7 +1776,7 @@ colnames(AllParamsOut) <- correct_columns
 
 ```
 
-### Extended data Fig5: trends per location
+### Extended data Fig 3: trends per location
 
 ```{r warning=FALSE, message=FALSE, eval=T, echo=FALSE, fig.width=10, fig.height=6}
 
@@ -1826,7 +1836,7 @@ knitr::kable(tempSummary, digits = 4)
 
 ```
 
-### Extended data Fig. 6: inside/outside MPA
+### Supplementary Figure 2: temporal changes inside/outside MPA
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T, fig.width=10, fig.height=6}
 ###Outside MPA
@@ -1884,7 +1894,7 @@ rm(temp_data)
 
 ```
 
-### Extended Data Table 3: print temporal slopes and summary
+### Supplementary Table 4: print temporal slopes and summary
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = T}
 load(file = "analysesOutputs/BayesTempPool_105spp.RData")
@@ -1904,7 +1914,7 @@ knitr::kable(temp_slopes_to_print, digits = 4)
 
 ```
 
-### Extended Data Table 2: temporal statistics 
+### Supplementary Table 2: temporal statistics 
 
 ```{r, warning=FALSE, message=FALSE, echo = F, eval = F}
 #rm(list = ls())
