@@ -3,7 +3,7 @@ Code and datafile for the study "Fish body sizes change with temperature, but no
 
 This study explores fish body size and temperature correlations around the Australian continent. The abstract is below. To run the code download the R project and the associated files. The .Rmd document includes all the information neeeded. 
 
-**For further uses of this code or datasets please contact authors of this study**
+**For further uses of this code or datasets please contact the authors of this study**
 
 Abstract: 
 
