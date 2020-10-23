@@ -1,7 +1,9 @@
 # RLSfishSize
 Code and datafile for the study "Fish body sizes change with temperature, but not all species shrink with warming" by Audzijonyte A, Richards SA, Stuart-Smith RD, Pecl G, Edgar GJ, Barrett NS, Payne N, Blanchard JL 2020 Nature Ecology and Evolution, 4, 809–814 (https://www.nature.com/articles/s41559-020-1171-0)
 
-This study explores fish body size and temperature correlations around the Australian continent. The abstract is below. To run the code download the R project and the associated files. The .Rmd document includes all the information neeeded. For further uses of this code or datasets please contact authors of this study. 
+This study explores fish body size and temperature correlations around the Australian continent. The abstract is below. To run the code download the R project and the associated files. The .Rmd document includes all the information neeeded. 
+
+**For further uses of this code or datasets please contact authors of this study. 
 
 Abstract: 
 
