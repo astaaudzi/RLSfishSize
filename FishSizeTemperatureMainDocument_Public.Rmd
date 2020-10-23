@@ -11,9 +11,11 @@ output:
     toc:yes
 ---
 
-This document is an electronic supplement to the NEE submission NATECOLEVOL-19108348-T. The document contains unpublished code and data. Please use it only for review purposes. 
-To run the code make sure all the libraries listed in the first chunk are installed 
+This document is an electronic supplement to the publication "Fish body sizes change with temperature, but not all species shrink with warming" by Audzijonyte A, Richards SA, Stuart-Smith RD, Pecl G, Edgar GJ, Barrett NS, Payne N, Blanchard JL, Nature Ecology and Evolution (https://www.nature.com/articles/s41559-020-1171-0). 
+**If you want to use the dataset for further research or publications it would be appropriate to contact Rick Stuart-Smith, Graham Edgar and Neville Barret who are behind this massive effort of long-term data collection**
 
+
+To run the code make sure all the libraries listed in the first chunk are installed 
 
 ### Load libraries
 
